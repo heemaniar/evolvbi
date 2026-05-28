@@ -45,32 +45,128 @@ def _save_prompt(text: str) -> None:
 # ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="EvolvBI",
-    page_icon="🔬",
+    page_icon="✨",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# ── Custom fonts + CSS ────────────────────────────────────────────────────────
+# ── Fonts + comprehensive UI theme ───────────────────────────────────────────
 st.markdown("""
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap');
-html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-h1, h2, h3 { font-family: 'DM Sans', sans-serif; font-weight: 700; }
-.stButton > button[kind="primary"] { background-color: #3C3489 !important; border: none; }
-.stButton > button[kind="primary"]:hover { background-color: #534AB7 !important; }
-.teal-badge { color: #1D9E75; font-weight: 600; }
-.coral-badge { color: #D85A30; font-weight: 600; }
+/* ── Typography ─────────────────────────────────────────────────────────── */
+html, body, [class*="css"], p, span, div, li, td, th, label,
+.stMarkdown, .stChatMessage { font-family:'Inter',-apple-system,sans-serif !important; }
+h1,h2,h3,h4,h5,h6 { font-family:'Plus Jakarta Sans',sans-serif !important; font-weight:700 !important; }
+
+/* ── App background ─────────────────────────────────────────────────────── */
+.stApp, body { background-color:#0D0B1E !important; }
+.main .block-container { padding-top:1.5rem !important; }
+
+/* ── Sidebar ────────────────────────────────────────────────────────────── */
+[data-testid="stSidebar"] {
+    background:linear-gradient(180deg,#150F2D 0%,#0D0B1E 100%) !important;
+    border-right:1px solid rgba(83,74,183,0.3) !important;
+}
+[data-testid="stSidebar"] .block-container { padding-top:1.25rem !important; }
+
+/* ── Buttons — primary ──────────────────────────────────────────────────── */
+.stButton>button[kind="primary"] {
+    background:linear-gradient(135deg,#3C3489 0%,#534AB7 100%) !important;
+    color:#fff !important; border:none !important; border-radius:10px !important;
+    font-weight:600 !important; font-family:'Inter',sans-serif !important;
+    box-shadow:0 2px 10px rgba(60,52,137,0.35) !important;
+    transition:all 0.2s !important;
+}
+.stButton>button[kind="primary"]:hover {
+    transform:translateY(-1px) !important;
+    box-shadow:0 6px 20px rgba(83,74,183,0.5) !important;
+}
+/* ── Buttons — secondary ────────────────────────────────────────────────── */
+.stButton>button {
+    background:rgba(60,52,137,0.12) !important;
+    border:1px solid rgba(83,74,183,0.4) !important;
+    border-radius:10px !important; color:rgba(244,243,255,0.85) !important;
+    font-family:'Inter',sans-serif !important; font-size:0.85rem !important;
+    transition:all 0.15s !important;
+}
+.stButton>button:hover {
+    background:rgba(83,74,183,0.22) !important;
+    border-color:#534AB7 !important; color:#F4F3FF !important;
+}
+
+/* ── Chat bubbles ───────────────────────────────────────────────────────── */
+[data-testid="stChatMessage"] { border-radius:14px !important; margin-bottom:6px !important; }
+[data-testid="stChatMessage"][data-message-author-role="user"] {
+    background:rgba(60,52,137,0.16) !important;
+    border:1px solid rgba(83,74,183,0.22) !important;
+}
+[data-testid="stChatMessage"][data-message-author-role="assistant"] {
+    background:rgba(216,90,48,0.06) !important;
+    border:1px solid rgba(216,90,48,0.16) !important;
+}
+
+/* ── Chat input ─────────────────────────────────────────────────────────── */
+[data-testid="stChatInputTextArea"] {
+    background:#1A1735 !important; border:1px solid rgba(83,74,183,0.5) !important;
+    border-radius:12px !important; color:#F4F3FF !important;
+}
+[data-testid="stChatInputTextArea"]:focus-within {
+    border-color:#D85A30 !important; box-shadow:0 0 0 2px rgba(216,90,48,0.18) !important;
+}
+
+/* ── Expanders ──────────────────────────────────────────────────────────── */
+[data-testid="stExpander"] {
+    background:rgba(26,23,53,0.55) !important;
+    border:1px solid rgba(83,74,183,0.28) !important; border-radius:10px !important;
+}
+[data-testid="stExpander"] summary { color:rgba(244,243,255,0.75) !important; font-size:0.83rem !important; }
+
+/* ── Code ───────────────────────────────────────────────────────────────── */
+code,pre { background:#100E24 !important; border:1px solid rgba(83,74,183,0.22) !important; border-radius:7px !important; }
+code { color:#1D9E75 !important; }
+
+/* ── Diff block ─────────────────────────────────────────────────────────── */
+.diff-container { border-radius:10px; overflow:hidden; border:1px solid rgba(83,74,183,0.25); }
+
+/* ── Dividers ───────────────────────────────────────────────────────────── */
+hr { border-color:rgba(83,74,183,0.2) !important; margin:0.6rem 0 !important; }
+
+/* ── Caption / small ────────────────────────────────────────────────────── */
+.stCaption,small { color:rgba(244,243,255,0.48) !important; font-size:0.77rem !important; }
+
+/* ── Spinner ────────────────────────────────────────────────────────────── */
+.stSpinner>div { border-top-color:#D85A30 !important; }
+
+/* ── Success message ────────────────────────────────────────────────────── */
+.stSuccess { background:rgba(29,158,117,0.12) !important; border:1px solid rgba(29,158,117,0.35) !important; border-radius:10px !important; }
+
+/* ── Tags ───────────────────────────────────────────────────────────────── */
+.tag-teal  { color:#1D9E75; font-weight:600; }
+.tag-coral { color:#D85A30; font-weight:600; }
+.tag-purple{ color:#534AB7; font-weight:600; }
+
+/* ── Scrollbar ──────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width:5px; height:5px; }
+::-webkit-scrollbar-track { background:#0D0B1E; }
+::-webkit-scrollbar-thumb { background:#3C3489; border-radius:3px; }
+::-webkit-scrollbar-thumb:hover { background:#534AB7; }
+
+/* ── Hide Streamlit chrome ──────────────────────────────────────────────── */
+#MainMenu,footer { visibility:hidden; }
 </style>
 """, unsafe_allow_html=True)
 
 # ── Example questions ──────────────────────────────────────────────────────────
 EXAMPLE_QUESTIONS = [
-    ("📊 Revenue", "Which mall had the highest revenue last month?"),
-    ("🏆 Categories", "What are the top 5 categories by total sales?"),
-    ("👥 Customers", "How many unique customers visited Kanyon in 2022?"),
-    ("📉 Slow", "Which tenant had the lowest revenue in 2022 at Forum Istanbul?"),
-    ("📅 Seasonal", "Which month had the highest sales across all malls in 2022?"),
-    ("🧮 Basket", "What is the average basket size per category?"),
+    ("↗ Revenue", "Which mall had the highest revenue last month?"),
+    ("◈ Categories", "What are the top 5 categories by total sales?"),
+    ("◎ Customers", "How many unique customers visited Kanyon in 2022?"),
+    ("↘ Underperform", "Which tenant had the lowest revenue in 2022 at Forum Istanbul?"),
+    ("⊕ Seasonal", "Which month had the highest sales across all malls in 2022?"),
+    ("◌ Basket", "What is the average basket size per category?"),
 ]
 
 
@@ -191,11 +287,23 @@ def _render_prompt_diff(old: str, new: str) -> str:
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("## 🔬 EvolvBI")
-    st.caption("Self-improving SQL analytics · Istanbul Mall Data")
-    st.divider()
+    st.markdown("""
+<div style="padding:4px 0 18px;">
+  <div style="display:flex;align-items:center;gap:11px;">
+    <div style="width:40px;height:40px;background:linear-gradient(135deg,#3C3489 0%,#D85A30 100%);
+         border-radius:11px;display:flex;align-items:center;justify-content:center;
+         font-size:20px;box-shadow:0 3px 12px rgba(216,90,48,0.4);flex-shrink:0;">✨</div>
+    <div>
+      <div style="font-family:'Plus Jakarta Sans',sans-serif;font-size:1.05rem;
+           font-weight:800;color:#F4F3FF;line-height:1.15;letter-spacing:-0.3px;">EvolvBI</div>
+      <div style="font-size:0.68rem;color:#D85A30;font-weight:600;letter-spacing:0.6px;
+           font-family:'Inter',sans-serif;text-transform:uppercase;">Self-Improving Analytics</div>
+    </div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
-    st.markdown("### 💡 Example questions")
+    st.markdown('<p style="font-size:0.72rem;color:rgba(244,243,255,0.45);font-weight:600;letter-spacing:0.8px;text-transform:uppercase;margin:0 0 8px;font-family:\'Inter\',sans-serif;">Quick questions</p>', unsafe_allow_html=True)
     for label, q in EXAMPLE_QUESTIONS:
         if st.button(label, use_container_width=True, key=f"ex_{label}"):
             st.session_state.pending_prompt = q
@@ -203,8 +311,8 @@ with st.sidebar:
     st.divider()
 
     # ── Improvement loop ───────────────────────────────────────────────────────
-    st.markdown("### 🔄 Improvement Loop")
-    st.caption("Reads Phoenix failure traces · proposes prompt edits")
+    st.markdown('<p style="font-size:0.72rem;color:rgba(244,243,255,0.45);font-weight:600;letter-spacing:0.8px;text-transform:uppercase;margin:0 0 6px;font-family:\'Inter\',sans-serif;">Improvement Loop</p>', unsafe_allow_html=True)
+    st.markdown('<p style="font-size:0.78rem;color:rgba(244,243,255,0.5);margin:0 0 8px;font-family:\'Inter\',sans-serif;">Reads Phoenix failure traces · proposes prompt edits</p>', unsafe_allow_html=True)
 
     if st.button("Run improvement loop", use_container_width=True, type="primary"):
         with st.spinner("Analysing failures in Phoenix…"):
@@ -255,12 +363,22 @@ with st.sidebar:
         st.caption("_Set PHOENIX\\_COLLECTOR\\_ENDPOINT to enable trace links._")
 
 
-# ── Main ───────────────────────────────────────────────────────────────────────
-st.markdown("# 🔬 EvolvBI")
-st.caption(
-    "Self-improving retail analytics · Ask a question · See the SQL · "
-    "Run the improvement loop to watch the agent rewrite its own instructions."
-)
+# ── Main header ───────────────────────────────────────────────────────────────
+st.markdown("""
+<div style="display:flex;align-items:center;gap:14px;padding:4px 0 6px;">
+  <div style="width:52px;height:52px;background:linear-gradient(135deg,#3C3489 0%,#D85A30 100%);
+       border-radius:14px;display:flex;align-items:center;justify-content:center;
+       font-size:26px;box-shadow:0 4px 18px rgba(216,90,48,0.45);flex-shrink:0;">✨</div>
+  <div>
+    <div style="font-family:'Plus Jakarta Sans',sans-serif;font-size:2rem;font-weight:800;
+         color:#F4F3FF;line-height:1.1;letter-spacing:-0.8px;">EvolvBI</div>
+    <div style="font-size:0.78rem;color:rgba(244,243,255,0.5);font-weight:500;
+         font-family:'Inter',sans-serif;letter-spacing:0.2px;">
+      Ask a question · See the SQL · Watch the agent improve itself
+    </div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 st.divider()
 
 for msg in st.session_state.get("messages", []):
