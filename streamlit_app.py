@@ -51,7 +51,9 @@ st.set_page_config(
 )
 
 # ── Fonts + comprehensive UI theme ───────────────────────────────────────────
-st.markdown("""
+# st.html() injects <style>/<link> into the parent document head (Streamlit 1.31+)
+# Do NOT use st.markdown for CSS — it strips <style> tags in newer versions.
+st.html("""
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -157,7 +159,7 @@ hr { border-color:rgba(83,74,183,0.2) !important; margin:0.6rem 0 !important; }
 /* ── Hide Streamlit chrome ──────────────────────────────────────────────── */
 #MainMenu,footer { visibility:hidden; }
 </style>
-""", unsafe_allow_html=True)
+""")
 
 # ── Example questions ──────────────────────────────────────────────────────────
 EXAMPLE_QUESTIONS = [
