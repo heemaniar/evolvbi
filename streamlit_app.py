@@ -383,8 +383,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 st.divider()
 
+_AVATAR = {"user": "🧑‍💼", "assistant": "📊"}
+
 for msg in st.session_state.get("messages", []):
-    with st.chat_message(msg["role"]):
+    with st.chat_message(msg["role"], avatar=_AVATAR.get(msg["role"])):
         st.markdown(msg["content"])
         if msg["role"] == "assistant" and msg.get("sql"):
             with st.expander("Show reasoning (SQL + trace)", expanded=False):
@@ -408,10 +410,10 @@ if prompt:
     if not msgs or msgs[-1].get("content") != prompt or msgs[-1].get("role") != "user":
         st.session_state.messages.append({"role": "user", "content": prompt})
 
-    with st.chat_message("user"):
+    with st.chat_message("user", avatar="🧑‍💼"):
         st.markdown(prompt)
 
-    with st.chat_message("assistant"):
+    with st.chat_message("assistant", avatar="📊"):
         status_slot = st.empty()
         text_slot = st.empty()
         full_text = ""
