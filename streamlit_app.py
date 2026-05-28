@@ -57,93 +57,117 @@ st.html("""
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
 <style>
 /* ── Typography ─────────────────────────────────────────────────────────── */
 html, body, [class*="css"], p, span, div, li, td, th, label,
 .stMarkdown, .stChatMessage { font-family:'Inter',-apple-system,sans-serif !important; }
-h1,h2,h3,h4,h5,h6 { font-family:'Plus Jakarta Sans',sans-serif !important; font-weight:700 !important; }
+h1,h2,h3,h4,h5,h6 { font-family:'Plus Jakarta Sans',sans-serif !important;
+    font-weight:700 !important; color:#1A1735 !important; }
 
-/* ── App background ─────────────────────────────────────────────────────── */
-.stApp, body { background-color:#0D0B1E !important; }
+/* ── App background — Lavender ──────────────────────────────────────────── */
+.stApp, body { background-color:#EEEDFE !important; }
 .main .block-container { padding-top:1.5rem !important; }
 
-/* ── Sidebar ────────────────────────────────────────────────────────────── */
+/* ── Sidebar — stays dark purple ────────────────────────────────────────── */
 [data-testid="stSidebar"] {
-    background:linear-gradient(180deg,#150F2D 0%,#0D0B1E 100%) !important;
-    border-right:1px solid rgba(83,74,183,0.3) !important;
+    background:linear-gradient(180deg,#150F2D 0%,#2D2156 100%) !important;
+    border-right:1px solid rgba(83,74,183,0.35) !important;
 }
 [data-testid="stSidebar"] .block-container { padding-top:1.25rem !important; }
+[data-testid="stSidebar"] .stMarkdown p,
+[data-testid="stSidebar"] .stMarkdown span,
+[data-testid="stSidebar"] .stCaption { color:rgba(244,243,255,0.65) !important; }
 
 /* ── Buttons — primary ──────────────────────────────────────────────────── */
 .stButton>button[kind="primary"] {
     background:linear-gradient(135deg,#3C3489 0%,#534AB7 100%) !important;
     color:#fff !important; border:none !important; border-radius:10px !important;
     font-weight:600 !important; font-family:'Inter',sans-serif !important;
-    box-shadow:0 2px 10px rgba(60,52,137,0.35) !important;
+    box-shadow:0 2px 10px rgba(60,52,137,0.25) !important;
     transition:all 0.2s !important;
 }
 .stButton>button[kind="primary"]:hover {
     transform:translateY(-1px) !important;
-    box-shadow:0 6px 20px rgba(83,74,183,0.5) !important;
+    box-shadow:0 6px 20px rgba(83,74,183,0.4) !important;
 }
-/* ── Buttons — secondary ────────────────────────────────────────────────── */
-.stButton>button {
-    background:rgba(60,52,137,0.12) !important;
-    border:1px solid rgba(83,74,183,0.4) !important;
-    border-radius:10px !important; color:rgba(244,243,255,0.85) !important;
+/* ── Sidebar buttons (dark background) ─────────────────────────────────── */
+[data-testid="stSidebar"] .stButton>button {
+    background:rgba(60,52,137,0.28) !important;
+    border:1px solid rgba(83,74,183,0.45) !important;
+    border-radius:10px !important; color:rgba(244,243,255,0.88) !important;
     font-family:'Inter',sans-serif !important; font-size:0.85rem !important;
     transition:all 0.15s !important;
 }
-.stButton>button:hover {
-    background:rgba(83,74,183,0.22) !important;
+[data-testid="stSidebar"] .stButton>button:hover {
+    background:rgba(83,74,183,0.4) !important;
     border-color:#534AB7 !important; color:#F4F3FF !important;
 }
+/* ── Main area buttons (lavender background) ────────────────────────────── */
+.main .stButton>button {
+    background:rgba(60,52,137,0.08) !important;
+    border:1px solid rgba(83,74,183,0.3) !important;
+    border-radius:10px !important; color:#3C3489 !important;
+    font-family:'Inter',sans-serif !important; font-size:0.85rem !important;
+    transition:all 0.15s !important;
+}
+.main .stButton>button:hover {
+    background:rgba(83,74,183,0.14) !important;
+    border-color:#534AB7 !important; color:#1A1735 !important;
+}
 
-/* ── Chat bubbles ───────────────────────────────────────────────────────── */
+/* ── Chat bubbles (on lavender) ─────────────────────────────────────────── */
 [data-testid="stChatMessage"] { border-radius:14px !important; margin-bottom:6px !important; }
 [data-testid="stChatMessage"][data-message-author-role="user"] {
-    background:rgba(60,52,137,0.16) !important;
-    border:1px solid rgba(83,74,183,0.22) !important;
+    background:rgba(60,52,137,0.07) !important;
+    border:1px solid rgba(83,74,183,0.18) !important;
 }
 [data-testid="stChatMessage"][data-message-author-role="assistant"] {
-    background:rgba(216,90,48,0.06) !important;
-    border:1px solid rgba(216,90,48,0.16) !important;
+    background:rgba(255,255,255,0.68) !important;
+    border:1px solid rgba(216,90,48,0.2) !important;
 }
 
 /* ── Chat input ─────────────────────────────────────────────────────────── */
 [data-testid="stChatInputTextArea"] {
-    background:#1A1735 !important; border:1px solid rgba(83,74,183,0.5) !important;
-    border-radius:12px !important; color:#F4F3FF !important;
+    background:rgba(255,255,255,0.82) !important;
+    border:1px solid rgba(83,74,183,0.4) !important;
+    border-radius:12px !important; color:#1A1735 !important;
 }
 [data-testid="stChatInputTextArea"]:focus-within {
-    border-color:#D85A30 !important; box-shadow:0 0 0 2px rgba(216,90,48,0.18) !important;
+    border-color:#D85A30 !important; box-shadow:0 0 0 2px rgba(216,90,48,0.15) !important;
 }
 
 /* ── Expanders ──────────────────────────────────────────────────────────── */
 [data-testid="stExpander"] {
-    background:rgba(26,23,53,0.55) !important;
-    border:1px solid rgba(83,74,183,0.28) !important; border-radius:10px !important;
+    background:rgba(255,255,255,0.55) !important;
+    border:1px solid rgba(83,74,183,0.22) !important; border-radius:10px !important;
 }
-[data-testid="stExpander"] summary { color:rgba(244,243,255,0.75) !important; font-size:0.83rem !important; }
+[data-testid="stExpander"] summary { color:#2D2156 !important; font-size:0.83rem !important; }
 
 /* ── Code ───────────────────────────────────────────────────────────────── */
-code,pre { background:#100E24 !important; border:1px solid rgba(83,74,183,0.22) !important; border-radius:7px !important; }
+code,pre { background:#F0EFFE !important; border:1px solid rgba(83,74,183,0.18) !important; border-radius:7px !important; }
 code { color:#1D9E75 !important; }
 
 /* ── Diff block ─────────────────────────────────────────────────────────── */
-.diff-container { border-radius:10px; overflow:hidden; border:1px solid rgba(83,74,183,0.25); }
+.diff-container { border-radius:10px; overflow:hidden; border:1px solid rgba(83,74,183,0.2); }
+
+/* ── Tables ─────────────────────────────────────────────────────────────── */
+table { background:rgba(255,255,255,0.5) !important; border-radius:8px !important; }
+thead tr { background:rgba(60,52,137,0.08) !important; }
+th { color:#1A1735 !important; font-family:'Plus Jakarta Sans',sans-serif !important; }
+td { color:#1A1735 !important; }
 
 /* ── Dividers ───────────────────────────────────────────────────────────── */
-hr { border-color:rgba(83,74,183,0.2) !important; margin:0.6rem 0 !important; }
+hr { border-color:rgba(83,74,183,0.18) !important; margin:0.6rem 0 !important; }
 
 /* ── Caption / small ────────────────────────────────────────────────────── */
-.stCaption,small { color:rgba(244,243,255,0.48) !important; font-size:0.77rem !important; }
+.stCaption,small { color:rgba(26,23,53,0.5) !important; font-size:0.77rem !important; }
 
 /* ── Spinner ────────────────────────────────────────────────────────────── */
 .stSpinner>div { border-top-color:#D85A30 !important; }
 
 /* ── Success message ────────────────────────────────────────────────────── */
-.stSuccess { background:rgba(29,158,117,0.12) !important; border:1px solid rgba(29,158,117,0.35) !important; border-radius:10px !important; }
+.stSuccess { background:rgba(29,158,117,0.1) !important; border:1px solid rgba(29,158,117,0.3) !important; border-radius:10px !important; }
 
 /* ── Tags ───────────────────────────────────────────────────────────────── */
 .tag-teal  { color:#1D9E75; font-weight:600; }
@@ -152,9 +176,9 @@ hr { border-color:rgba(83,74,183,0.2) !important; margin:0.6rem 0 !important; }
 
 /* ── Scrollbar ──────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width:5px; height:5px; }
-::-webkit-scrollbar-track { background:#0D0B1E; }
-::-webkit-scrollbar-thumb { background:#3C3489; border-radius:3px; }
-::-webkit-scrollbar-thumb:hover { background:#534AB7; }
+::-webkit-scrollbar-track { background:#EEEDFE; }
+::-webkit-scrollbar-thumb { background:#534AB7; border-radius:3px; }
+::-webkit-scrollbar-thumb:hover { background:#3C3489; }
 
 /* ── Hide Streamlit chrome ──────────────────────────────────────────────── */
 #MainMenu,footer { visibility:hidden; }
@@ -305,7 +329,7 @@ with st.sidebar:
 </div>
 """, unsafe_allow_html=True)
 
-    st.markdown('<p style="font-size:0.72rem;color:rgba(244,243,255,0.45);font-weight:600;letter-spacing:0.8px;text-transform:uppercase;margin:0 0 8px;font-family:\'Inter\',sans-serif;">Quick questions</p>', unsafe_allow_html=True)
+    st.markdown('<p style="font-size:0.72rem;color:#D85A30;font-weight:700;letter-spacing:0.9px;text-transform:uppercase;margin:0 0 8px;font-family:\'Inter\',sans-serif;">Quick questions</p>', unsafe_allow_html=True)
     for label, q in EXAMPLE_QUESTIONS:
         if st.button(label, use_container_width=True, key=f"ex_{label}"):
             st.session_state.pending_prompt = q
@@ -373,8 +397,8 @@ st.markdown("""
        font-size:26px;box-shadow:0 4px 18px rgba(216,90,48,0.45);flex-shrink:0;">✨</div>
   <div>
     <div style="font-family:'Plus Jakarta Sans',sans-serif;font-size:2rem;font-weight:800;
-         color:#F4F3FF;line-height:1.1;letter-spacing:-0.8px;">EvolvBI</div>
-    <div style="font-size:0.78rem;color:rgba(244,243,255,0.5);font-weight:500;
+         color:#1A1735;line-height:1.1;letter-spacing:-0.8px;">EvolvBI</div>
+    <div style="font-size:0.78rem;color:rgba(26,23,53,0.5);font-weight:500;
          font-family:'Inter',sans-serif;letter-spacing:0.2px;">
       Ask a question · See the SQL · Watch the agent improve itself
     </div>
