@@ -9,10 +9,12 @@ Cloud Run:
 """
 
 import asyncio
+import concurrent.futures
 import difflib
-import json
 import os
+import re
 import sys
+import uuid
 from pathlib import Path
 
 import streamlit as st
@@ -25,8 +27,20 @@ _ROOT = Path(__file__).parent
 sys.path.insert(0, str(_ROOT))
 load_dotenv(_ROOT / ".env")
 
-from agents.sql_agent import sql_agent  # noqa: E402 (after path/env setup)
-from agents.improver import run_improvement_loop  # noqa: E402
+from agents.sql_agent import build_agent, _BASE_PROMPT  # noqa: E402
+from agents.improver import run_improvement_loop         # noqa: E402
+
+# ── Prompt persistence ─────────────────────────────────────────────────────────
+PROMPT_FILE = _ROOT / "current_prompt.txt"
+
+
+def _load_prompt() -> str:
+    return PROMPT_FILE.read_text() if PROMPT_FILE.exists() else _BASE_PROMPT
+
+
+def _save_prompt(text: str) -> None:
+    PROMPT_FILE.write_text(text)
+
 
 # ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -35,6 +49,19 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# ── Custom fonts + CSS ────────────────────────────────────────────────────────
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap');
+html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+h1, h2, h3 { font-family: 'DM Sans', sans-serif; font-weight: 700; }
+.stButton > button[kind="primary"] { background-color: #3C3489 !important; border: none; }
+.stButton > button[kind="primary"]:hover { background-color: #534AB7 !important; }
+.teal-badge { color: #1D9E75; font-weight: 600; }
+.coral-badge { color: #D85A30; font-weight: 600; }
+</style>
+""", unsafe_allow_html=True)
 
 # ── Example questions ──────────────────────────────────────────────────────────
 EXAMPLE_QUESTIONS = [
@@ -46,36 +73,34 @@ EXAMPLE_QUESTIONS = [
     ("🧮 Basket", "What is the average basket size per category?"),
 ]
 
-# Baseline SQL agent system prompt (used for diff visualization)
-_BASE_PROMPT = """You are a retail analytics assistant for Istanbul mall managers.
-You have access to a BigQuery warehouse via the query_warehouse tool.
 
-When the user asks a business question:
-1. Write a precise SQL query to answer it.
-2. Run it with query_warehouse.
-3. Explain the results in plain English — no jargon, no raw SQL in your reply.
-4. Include specific numbers from the results to support your explanation.
-5. If the question cannot be answered from the data, say so clearly.
+# ── ADK runner — session-state based (not @st.cache_resource) ─────────────────
+# Stored in st.session_state so it can be rebuilt live when prompt is updated.
 
-Always use aggregate tables (agg_mall_daily, agg_tenant_daily) when possible.
-Never guess — only state facts that appear in query results."""
+def _get_user_id() -> str:
+    if "user_id" not in st.session_state:
+        st.session_state.user_id = str(uuid.uuid4())[:8]
+    return st.session_state.user_id
 
 
-# ── ADK runner (cached per process) ───────────────────────────────────────────
-@st.cache_resource
-def _get_runner() -> tuple[Runner, InMemorySessionService]:
-    svc = InMemorySessionService()
-    r = Runner(agent=sql_agent, app_name="evolvbi", session_service=svc)
-    return r, svc
-
-
-runner, _svc = _get_runner()
+def _get_runner(force_prompt: str | None = None) -> tuple[Runner, InMemorySessionService]:
+    """Return (runner, svc). Rebuilds if force_prompt is given or not yet initialised."""
+    if "runner" not in st.session_state or force_prompt is not None:
+        prompt = force_prompt or _load_prompt()
+        agent = build_agent(prompt)
+        svc = InMemorySessionService()
+        r = Runner(agent=agent, app_name="evolvbi", session_service=svc)
+        st.session_state.runner = r
+        st.session_state._svc = svc
+        st.session_state.current_prompt = prompt
+    return st.session_state.runner, st.session_state._svc
 
 
 def _get_session_id() -> str:
+    _, svc = _get_runner()
     if "adk_session_id" not in st.session_state:
         session = asyncio.run(
-            _svc.create_session(app_name="evolvbi", user_id="analyst")
+            svc.create_session(app_name="evolvbi", user_id=_get_user_id())
         )
         st.session_state.adk_session_id = session.id
         st.session_state.messages = []
@@ -85,8 +110,9 @@ def _get_session_id() -> str:
 
 
 def _reset() -> None:
+    _, svc = _get_runner()
     session = asyncio.run(
-        _svc.create_session(app_name="evolvbi", user_id="analyst")
+        svc.create_session(app_name="evolvbi", user_id=_get_user_id())
     )
     st.session_state.adk_session_id = session.id
     st.session_state.messages = []
@@ -94,7 +120,44 @@ def _reset() -> None:
     st.session_state.last_trace_id = ""
     st.session_state.pop("improvement_output", None)
     st.session_state.pop("improved_prompt", None)
+    st.session_state.pop("pre_apply_pass_rate", None)
     st.rerun()
+
+
+# ── Improvement helpers ────────────────────────────────────────────────────────
+
+def _run_improvement_sync() -> str:
+    """Run the async improvement loop in a thread (avoids Streamlit event loop conflict)."""
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        return executor.submit(asyncio.run, run_improvement_loop()).result(timeout=120)
+
+
+def _apply_edits_to_prompt(base: str, edits_text: str) -> str:
+    """Use Gemini to properly integrate improvement-loop edits into the base prompt.
+
+    Avoids the naive append approach that stacks contradictory instructions.
+    """
+    import google.genai as genai
+
+    _model = os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview")
+    client = genai.Client(
+        vertexai=True,
+        project=os.environ.get("GOOGLE_CLOUD_PROJECT", "mallpulse-hackathon"),
+        location=os.environ.get("GOOGLE_CLOUD_LOCATION", "global"),
+    )
+    response = client.models.generate_content(
+        model=_model,
+        contents=f"""You are rewriting a system prompt to incorporate proposed improvements.
+Do not append — rewrite the relevant sections so the improvements are naturally integrated.
+Return ONLY the complete rewritten prompt. Keep it concise and non-contradictory.
+
+CURRENT PROMPT:
+{base}
+
+PROPOSED IMPROVEMENTS:
+{edits_text}""",
+    )
+    return response.text.strip()
 
 
 # ── Diff renderer ──────────────────────────────────────────────────────────────
@@ -103,36 +166,27 @@ def _render_prompt_diff(old: str, new: str) -> str:
     diff = list(difflib.ndiff(old.splitlines(keepends=True), new.splitlines(keepends=True)))
     html_lines = []
     for line in diff:
+        escaped = (
+            line[2:].rstrip("\n")
+            .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        )
         if line.startswith("- "):
-            escaped = line[2:].rstrip("\n").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             html_lines.append(
                 f'<span style="background:#3d0000;color:#ff6b6b;text-decoration:line-through;'
-                f'display:block;padding:1px 4px;font-family:monospace;white-space:pre-wrap">'
+                f'display:block;padding:1px 6px;font-family:monospace;white-space:pre-wrap">'
                 f'{escaped}</span>'
             )
         elif line.startswith("+ "):
-            escaped = line[2:].rstrip("\n").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             html_lines.append(
-                f'<span style="background:#003d00;color:#69db7c;display:block;padding:1px 4px;'
+                f'<span style="background:#003320;color:#1D9E75;display:block;padding:1px 6px;'
                 f'font-family:monospace;white-space:pre-wrap">{escaped}</span>'
             )
         elif line.startswith("  "):
-            escaped = line[2:].rstrip("\n").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             html_lines.append(
-                f'<span style="color:#888;display:block;padding:1px 4px;'
+                f'<span style="color:#888;display:block;padding:1px 6px;'
                 f'font-family:monospace;white-space:pre-wrap">{escaped}</span>'
             )
     return "<div>" + "".join(html_lines) + "</div>"
-
-
-def _apply_edits_to_prompt(base: str, edits_text: str) -> str:
-    """Naive: append each 'Prompt edit:' line as an extra instruction."""
-    import re
-    edits = re.findall(r"Prompt edit:\s*(.+?)(?=\nPATTERN|\Z)", edits_text, re.DOTALL)
-    if not edits:
-        return base
-    additions = "\n".join(f"- {e.strip()}" for e in edits)
-    return base + "\n\nAdditional instructions from improvement loop:\n" + additions
 
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
@@ -148,16 +202,18 @@ with st.sidebar:
 
     st.divider()
 
-    # ── Improvement loop button ────────────────────────────────────────────────
+    # ── Improvement loop ───────────────────────────────────────────────────────
     st.markdown("### 🔄 Improvement Loop")
     st.caption("Reads Phoenix failure traces · proposes prompt edits")
+
     if st.button("Run improvement loop", use_container_width=True, type="primary"):
         with st.spinner("Analysing failures in Phoenix…"):
             try:
-                output = asyncio.run(run_improvement_loop())
+                output = _run_improvement_sync()
                 st.session_state.improvement_output = output
+                # Pre-compute the rewritten prompt (shown in diff, applied on confirm)
                 st.session_state.improved_prompt = _apply_edits_to_prompt(
-                    _BASE_PROMPT, output
+                    st.session_state.get("current_prompt", _load_prompt()), output
                 )
             except Exception as e:
                 st.session_state.improvement_output = f"Error: {e}"
@@ -168,22 +224,35 @@ with st.sidebar:
             st.markdown(st.session_state.improvement_output)
 
         if st.session_state.get("improved_prompt"):
-            with st.expander("Prompt diff", expanded=False):
+            with st.expander("Prompt diff", expanded=True):
                 diff_html = _render_prompt_diff(
-                    _BASE_PROMPT, st.session_state["improved_prompt"]
+                    st.session_state.get("current_prompt", _load_prompt()),
+                    st.session_state["improved_prompt"],
                 )
                 st.markdown(diff_html, unsafe_allow_html=True)
+
+            # ── Apply & Rebuild button ─────────────────────────────────────────
+            if st.button("✅ Apply & Rebuild Agent", use_container_width=True, type="primary"):
+                new_prompt = st.session_state["improved_prompt"]
+                _save_prompt(new_prompt)
+                # Invalidate session so next query uses the new runner
+                st.session_state.pop("adk_session_id", None)
+                _get_runner(force_prompt=new_prompt)
+                st.success("Agent rebuilt with improved prompt. Next query uses the new instructions.")
+                st.session_state.pop("improvement_output", None)
+                st.session_state.pop("improved_prompt", None)
+                st.rerun()
 
     st.divider()
     if st.button("🗑️ Clear conversation", use_container_width=True):
         _reset()
 
     st.divider()
-    phoenix_url = os.environ.get("PHOENIX_COLLECTOR_ENDPOINT", "").replace(
-        "/v1/traces", ""
-    )
-    if phoenix_url:
-        st.markdown(f"[Open Phoenix traces ↗]({phoenix_url}/projects/evolvbi)")
+    phoenix_base = os.environ.get("PHOENIX_COLLECTOR_ENDPOINT", "").replace("/v1/traces", "")
+    if phoenix_base:
+        st.markdown(f"[Open Phoenix traces ↗]({phoenix_base}/projects/evolvbi)")
+    else:
+        st.caption("_Set PHOENIX\\_COLLECTOR\\_ENDPOINT to enable trace links._")
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -200,14 +269,11 @@ for msg in st.session_state.get("messages", []):
         if msg["role"] == "assistant" and msg.get("sql"):
             with st.expander("Show reasoning (SQL + trace)", expanded=False):
                 st.code(msg["sql"], language="sql")
-                if msg.get("trace_id"):
-                    trace_url = (
-                        phoenix_url + f"/projects/evolvbi/traces/{msg['trace_id']}"
-                        if phoenix_url
-                        else ""
-                    )
-                    if trace_url:
-                        st.markdown(f"[View trace in Phoenix ↗]({trace_url})")
+                if msg.get("trace_id") and phoenix_base:
+                    trace_url = f"{phoenix_base}/projects/evolvbi/traces/{msg['trace_id']}"
+                    st.markdown(f"[View trace in Phoenix ↗]({trace_url})")
+                elif msg.get("trace_id"):
+                    st.caption("Phoenix endpoint not configured — set PHOENIX_COLLECTOR_ENDPOINT to enable trace links.")
 
 prompt = st.chat_input("Ask about a mall, tenant, category, or time period…")
 if not prompt and "pending_prompt" in st.session_state:
@@ -215,7 +281,13 @@ if not prompt and "pending_prompt" in st.session_state:
 
 if prompt:
     _get_session_id()
-    st.session_state.messages.append({"role": "user", "content": prompt})
+    runner, _ = _get_runner()
+
+    # Guard against double-render on sidebar click mid-conversation
+    msgs = st.session_state.get("messages", [])
+    if not msgs or msgs[-1].get("content") != prompt or msgs[-1].get("role") != "user":
+        st.session_state.messages.append({"role": "user", "content": prompt})
+
     with st.chat_message("user"):
         st.markdown(prompt)
 
@@ -228,25 +300,21 @@ if prompt:
 
         try:
             for event in runner.run(
-                user_id="analyst",
+                user_id=_get_user_id(),
                 session_id=st.session_state.adk_session_id,
                 new_message=Content(parts=[Part(text=prompt)], role="user"),
             ):
-                # Capture tool calls to extract SQL
                 calls = (
                     event.get_function_calls()
-                    if hasattr(event, "get_function_calls")
-                    else []
+                    if hasattr(event, "get_function_calls") else []
                 )
                 if calls:
                     tool_names = ", ".join(f"`{c.name}`" for c in calls)
                     status_slot.caption(f"⚙️ Calling {tool_names}…")
                     for call in calls:
                         if call.name == "query_warehouse" and hasattr(call, "args"):
-                            args = call.args or {}
-                            last_sql = args.get("sql", "") or str(args)
+                            last_sql = (call.args or {}).get("sql", "") or str(call.args)
 
-                # Capture trace ID from event metadata
                 if hasattr(event, "invocation_id") and event.invocation_id:
                     trace_id = event.invocation_id
 
@@ -257,7 +325,13 @@ if prompt:
                             text_slot.markdown(full_text + " ▌")
 
         except Exception as exc:
-            full_text = f"⚠️ Something went wrong: {exc}"
+            err = str(exc).lower()
+            if "quota" in err or "rate" in err:
+                full_text = "⚠️ Query limit reached — please try again in a moment."
+            elif "bigquery" in err:
+                full_text = "⚠️ Data warehouse is temporarily unavailable."
+            else:
+                full_text = "⚠️ Something went wrong. Try rephrasing your question."
 
         status_slot.empty()
         text_slot.markdown(full_text or "_(No response)_")
@@ -265,23 +339,18 @@ if prompt:
         if last_sql:
             with st.expander("Show reasoning (SQL + trace)", expanded=False):
                 st.code(last_sql, language="sql")
-                if trace_id:
-                    trace_url = (
-                        phoenix_url + f"/projects/evolvbi/traces/{trace_id}"
-                        if phoenix_url
-                        else ""
-                    )
-                    if trace_url:
-                        st.markdown(f"[View trace in Phoenix ↗]({trace_url})")
+                if trace_id and phoenix_base:
+                    trace_url = f"{phoenix_base}/projects/evolvbi/traces/{trace_id}"
+                    st.markdown(f"[View trace in Phoenix ↗]({trace_url})")
+                elif trace_id:
+                    st.caption("Set PHOENIX_COLLECTOR_ENDPOINT to enable trace links.")
 
         st.session_state.last_sql = last_sql
         st.session_state.last_trace_id = trace_id
 
-    st.session_state.messages.append(
-        {
-            "role": "assistant",
-            "content": full_text,
-            "sql": last_sql,
-            "trace_id": trace_id,
-        }
-    )
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": full_text,
+        "sql": last_sql,
+        "trace_id": trace_id,
+    })

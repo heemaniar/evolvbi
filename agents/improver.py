@@ -97,7 +97,14 @@ def _fetch_failure_context() -> str:
 
 
 # ── Improvement agent ──────────────────────────────────────────────────────────
-_CURRENT_PROMPT_SUMMARY = """Current SQL agent system prompt (summary):
+def _load_current_prompt_summary() -> str:
+    """Read the live prompt from disk (set by streamlit_app when edits are applied)."""
+    prompt_file = Path(__file__).parent.parent / "current_prompt.txt"
+    if prompt_file.exists():
+        text = prompt_file.read_text()
+        # Truncate for the agent context — first 800 chars is enough for pattern matching
+        return "Current SQL agent system prompt:\n" + text[:800] + ("…" if len(text) > 800 else "")
+    return """Current SQL agent system prompt (summary):
 - Answer natural-language questions using BigQuery SQL
 - Use aggregate tables (agg_mall_daily, agg_tenant_daily) when possible
 - Explain results in plain English with specific numbers
@@ -126,11 +133,12 @@ PATTERN 2: ...
 Keep edits minimal and surgical — one sentence each. Do not rewrite the whole prompt."""
 
 
+_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview")
 _SESSION_SVC = InMemorySessionService()
 
 improver_agent = Agent(
     name="evolvbi_improver",
-    model="gemini-2.5-flash",
+    model=_MODEL,
     description="Reviews failed EvolvBI traces and proposes SQL agent prompt improvements.",
     instruction=_IMPROVER_INSTRUCTION,
 )
@@ -146,7 +154,7 @@ async def run_improvement_loop() -> str:
     message_text = (
         f"Here are the SQL agent's failure traces from Phoenix:\n\n"
         f"{failure_context}\n\n"
-        f"{_CURRENT_PROMPT_SUMMARY}\n\n"
+        f"{_load_current_prompt_summary()}\n\n"
         "Please analyse and propose prompt improvements."
     )
 

@@ -35,12 +35,13 @@ _client = Client(
 PROJECT = "evolvbi"
 
 # ── Gemini judge (Vertex AI — no OpenAI, per hackathon rules) ─────────────────
+# gemini-3-flash-preview requires location="global"
 _judge = LLM(
     provider="google",
-    model="gemini-2.5-flash",
+    model=os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview"),
     vertexai=True,
     project=os.environ.get("GOOGLE_CLOUD_PROJECT", "mallpulse-hackathon"),
-    location="us-central1",
+    location=os.environ.get("GOOGLE_CLOUD_LOCATION", "global"),
 )
 
 # ── Prompt for SQL relevance eval ─────────────────────────────────────────────

@@ -3,9 +3,17 @@ sql_agent.py — EvolvBI SQL agent with Arize Phoenix tracing.
 
 Answers natural-language questions from non-technical mall analysts
 by generating and running BigQuery SQL, then explaining the results.
+
+Exports build_agent() so streamlit_app.py can rebuild the agent live
+whenever the improvement loop applies prompt edits.
 """
 
 import os
+
+from dotenv import load_dotenv
+from pathlib import Path
+
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 from phoenix.otel import register
 from openinference.instrumentation.google_adk import GoogleADKInstrumentor
@@ -14,19 +22,23 @@ from google.adk.agents import Agent
 
 from tools.bigquery_tools import query_warehouse, SCHEMA
 
+# ── Model — Gemini 3 (global) with 2.5 Flash fallback ────────────────────────
+_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview")
+
+# ── Phoenix tracing ───────────────────────────────────────────────────────────
 _PHOENIX_ENDPOINT = os.environ.get(
     "PHOENIX_COLLECTOR_ENDPOINT",
     "https://app.phoenix.arize.com/v1/traces",
 )
 
-# PHOENIX_API_KEY env var is picked up automatically by register()
 tracer_provider = register(
     project_name="evolvbi",
     endpoint=_PHOENIX_ENDPOINT,
 )
 GoogleADKInstrumentor().instrument(tracer_provider=tracer_provider)
 
-_SYSTEM_PROMPT = f"""You are a retail analytics assistant for Istanbul mall managers.
+# ── Base system prompt (shared with streamlit_app for diff visualization) ─────
+_BASE_PROMPT = f"""You are a retail analytics assistant for Istanbul mall managers.
 You have access to a BigQuery warehouse via the query_warehouse tool.
 
 When the user asks a business question:
@@ -34,18 +46,33 @@ When the user asks a business question:
 2. Run it with query_warehouse.
 3. Explain the results in plain English — no jargon, no raw SQL in your reply.
 4. Include specific numbers from the results to support your explanation.
-5. If the question cannot be answered from the data, say so clearly.
+5. If the question cannot be answered from the data, attempt the closest reasonable interpretation and state your assumption clearly.
 
 Always use aggregate tables (agg_mall_daily, agg_tenant_daily) when possible.
 Never guess — only state facts that appear in query results.
+Strictly adhere to the provided schema; never reference tables or columns not listed below.
 
 {SCHEMA}
 """
 
-sql_agent = Agent(
-    name="evolvbi_sql_agent",
-    model="gemini-2.5-flash",
-    description="Answers natural-language questions about mall performance using BigQuery SQL.",
-    instruction=_SYSTEM_PROMPT,
-    tools=[query_warehouse],
-)
+
+def build_agent(instruction: str | None = None) -> Agent:
+    """Build and return a new sql_agent instance with the given instruction.
+
+    Args:
+        instruction: System prompt override. Uses _BASE_PROMPT if None.
+
+    Returns:
+        A freshly constructed ADK Agent with the given instruction.
+    """
+    return Agent(
+        name="evolvbi_sql_agent",
+        model=_MODEL,
+        description="Answers natural-language questions about mall performance using BigQuery SQL.",
+        instruction=instruction or _BASE_PROMPT,
+        tools=[query_warehouse],
+    )
+
+
+# Default instance (used by app.py for quick CLI tests)
+sql_agent = build_agent()
