@@ -57,11 +57,11 @@ st.html("""
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-<link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,400,0,0" rel="stylesheet">
 <style>
 /* ── Typography ─────────────────────────────────────────────────────────── */
-html, body, [class*="css"], p, span, div, li, td, th, label,
+/* NOTE: exclude <span> — Streamlit uses Material Symbols spans for expander
+   icons; forcing Inter on them breaks glyph rendering (shows raw ligature text) */
+html, body, [class*="css"], p, div, li, td, th, label,
 .stMarkdown, .stChatMessage { font-family:'Inter',-apple-system,sans-serif !important; }
 h1,h2,h3,h4,h5,h6 { font-family:'Plus Jakarta Sans',sans-serif !important;
     font-weight:700 !important; color:#1A1735 !important; }
