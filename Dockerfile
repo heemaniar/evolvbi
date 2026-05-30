@@ -1,8 +1,16 @@
 FROM python:3.12-slim
 
+# Install Node.js 20 (required for @arizeai/phoenix-mcp via npx)
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential \
+    && apt-get install -y --no-install-recommends build-essential curl ca-certificates gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && npm install -g npm@latest --quiet \
     && rm -rf /var/lib/apt/lists/*
+
+# Pre-cache the Phoenix MCP package so the container doesn't need to download
+# it at runtime (speeds up first improvement loop call)
+RUN npx -y @arizeai/phoenix-mcp@latest --version 2>/dev/null || true
 
 WORKDIR /app
 

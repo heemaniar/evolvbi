@@ -1,8 +1,13 @@
 """
-improver.py — Day 17: EvolvBI improvement agent.
+improver.py — EvolvBI improvement agent.
 
-Reads failure traces from Phoenix, groups them by failure pattern,
-and proposes specific edits to the SQL agent's system prompt.
+Reads failure traces from Arize Phoenix via the official Phoenix MCP server
+(@arizeai/phoenix-mcp), groups them by failure pattern, and proposes specific
+edits to the SQL agent's system prompt.
+
+The improver agent has direct MCP access to Phoenix — it calls get-spans and
+get-span-annotations itself rather than receiving pre-fetched context. This
+means the agent decides what to query and how deep to look.
 
 Run manually:
     python -c "from agents.improver import run_improvement_loop; import asyncio; asyncio.run(run_improvement_loop())"
@@ -11,8 +16,8 @@ Or triggered from Streamlit via the 'Run improvement loop' button.
 """
 
 import asyncio
-import json
 import os
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -22,83 +27,56 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 from google.adk.agents import Agent
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
+from google.adk.tools.mcp_tool.mcp_toolset import (
+    McpToolset,
+    StdioConnectionParams,
+    StdioServerParameters,
+)
 from google.genai.types import Content, Part
-from phoenix.client import Client
-from phoenix.client.resources.spans import SpanAnnotationData
 
-# ── Phoenix client ─────────────────────────────────────────────────────────────
-def _phoenix_client() -> Client:
-    return Client(
-        base_url=os.environ["PHOENIX_COLLECTOR_ENDPOINT"].replace("/v1/traces", ""),
-        api_key=os.environ["PHOENIX_API_KEY"],
+# ── Phoenix MCP toolset ───────────────────────────────────────────────────────
+# Uses the official @arizeai/phoenix-mcp npm package via npx.
+# Gives the improver agent direct read access to Phoenix traces, spans,
+# and eval annotations — no Python SDK intermediary.
+
+def _phoenix_base_url() -> str:
+    """Extract base URL from PHOENIX_COLLECTOR_ENDPOINT."""
+    endpoint = os.environ.get("PHOENIX_COLLECTOR_ENDPOINT", "https://app.phoenix.arize.com/v1/traces")
+    # Strip path components to get the base URL
+    # e.g. https://app.phoenix.arize.com/s/maniarheema/v1/traces → https://app.phoenix.arize.com
+    from urllib.parse import urlparse
+    parsed = urlparse(endpoint)
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _make_phoenix_mcp() -> McpToolset:
+    return McpToolset(
+        connection_params=StdioConnectionParams(
+            server_params=StdioServerParameters(
+                command="npx",
+                args=[
+                    "-y",
+                    "@arizeai/phoenix-mcp@latest",
+                    "--baseUrl", _phoenix_base_url(),
+                    "--apiKey", os.environ.get("PHOENIX_API_KEY", ""),
+                ],
+                env={**os.environ},
+            ),
+            timeout=45.0,
+        ),
+        # Read-only observability tools — no write/mutate operations
+        tool_filter=[
+            "list-projects",
+            "get-project",
+            "get-spans",
+            "get-span-annotations",
+        ],
     )
 
 
-def _fetch_failure_context() -> str:
-    """Fetch spans annotated as failed and return a structured summary for the agent."""
-    client = _phoenix_client()
-
-    all_spans = client.spans.get_spans_dataframe(project_identifier="evolvbi")
-    annotations_df = client.spans.get_span_annotations_dataframe(
-        spans_dataframe=all_spans,
-        project_identifier="evolvbi",
-    )
-
-    if annotations_df.empty:
-        return "No annotations found. Run evals/run_evals.py first."
-
-    # Find span IDs with at least one 'fail' annotation
-    # annotations_df is indexed by span_id; label is in 'result.label'
-    failed_mask = annotations_df["result.label"] == "fail"
-    failed_ids = set(annotations_df[failed_mask].index.tolist())
-
-    if not failed_ids:
-        return "No failure traces found. All evals passed."
-
-    root_spans = all_spans[all_spans["parent_id"].isna()]
-    failed_spans = root_spans[root_spans.index.isin(failed_ids)]
-
-    lines = [f"Found {len(failed_spans)} failed root span(s):\n"]
-    for span_id, row in failed_spans.iterrows():
-        # Extract question
-        raw_in = row.get("attributes.input.value", "") or ""
-        question = ""
-        try:
-            data = json.loads(raw_in)
-            parts = data.get("content", [{}])[0].get("parts", [{}])
-            question = parts[0].get("text", "") if parts else ""
-        except Exception:
-            question = str(raw_in)[:200]
-
-        # Get annotations for this span
-        span_anns = annotations_df[annotations_df.index == span_id]
-        ann_summary = "; ".join(
-            f"{r['annotation_name']}={r['result.label']} "
-            f"({str(r.get('result.explanation') or '')[:80]})"
-            for _, r in span_anns.iterrows()
-        )
-
-        # Get tool outputs (child spans)
-        child_spans = all_spans[all_spans["parent_id"] == span_id]
-        tool_outputs = []
-        for _, child in child_spans.iterrows():
-            out = child.get("attributes.output.value", "") or ""
-            if out:
-                tool_outputs.append(str(out)[:300])
-
-        lines.append(f"Span {span_id[:12]}:")
-        lines.append(f"  Question: {question[:200]}")
-        lines.append(f"  Evals: {ann_summary}")
-        if tool_outputs:
-            lines.append(f"  Tool output: {tool_outputs[0][:200]}")
-        lines.append("")
-
-    return "\n".join(lines)
-
-
-# ── Improvement agent ──────────────────────────────────────────────────────────
+# ── Prompt loader (from BigQuery, persisted across Cloud Run instances) ────────
 def _load_current_prompt_summary() -> str:
-    """Read the live prompt from BigQuery prompt_store (persisted across Cloud Run instances)."""
+    """Read the live prompt from BigQuery prompt_store."""
     try:
         from google.cloud import bigquery
         project = os.environ.get("GOOGLE_CLOUD_PROJECT", "mallpulse-hackathon")
@@ -120,51 +98,54 @@ def _load_current_prompt_summary() -> str:
 - Use CURRENT_DATE() for relative date queries
 """
 
+
+# ── Improvement agent instruction ─────────────────────────────────────────────
 _IMPROVER_INSTRUCTION = """You are an AI prompt engineer for the EvolvBI SQL analytics system.
+You have direct access to the Arize Phoenix observability platform via MCP tools.
 
-You will be given failure traces from a SQL analytics agent — questions it answered
-incorrectly, SQL that errored, or answers that didn't address the question.
-
-Your job:
-1. Read the failures carefully.
-2. Group them into 2-3 distinct failure PATTERNS (e.g. "wrong aggregation", "missing date filter", "hallucinated table name").
-3. For each pattern, propose ONE specific, concrete edit to the SQL agent's system prompt.
+Your job when triggered:
+1. Call `list-projects` to confirm the "evolvbi" project exists.
+2. Call `get-spans` for the "evolvbi" project to retrieve recent root spans.
+3. Call `get-span-annotations` with the span IDs to find spans labelled sql_success=fail
+   or sql_relevance=fail.
+4. If no failed spans exist, reply: "No failures found in Phoenix. All recent evals passed."
+5. If failures exist, group them into 2-3 distinct failure PATTERNS
+   (e.g. "wrong aggregation", "missing date filter", "hallucinated table name").
+6. For each pattern, propose ONE specific, concrete edit to the SQL agent's system prompt.
 
 Format your response as:
 
 PATTERN 1: <short name>
-Example trace: <span ID>
+Example span: <span ID>
 Root cause: <one sentence>
 Prompt edit: <exact text to add or change in the system prompt>
 
 PATTERN 2: ...
 
-Keep edits minimal and surgical — one sentence each. Do not rewrite the whole prompt."""
+Keep edits minimal and surgical — one sentence each. Do not rewrite the whole prompt.
+Reference the current system prompt provided below when suggesting edits."""
 
 
 _MODEL = os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview")
 _SESSION_SVC = InMemorySessionService()
 
-improver_agent = Agent(
-    name="evolvbi_improver",
-    model=_MODEL,
-    description="Reviews failed EvolvBI traces and proposes SQL agent prompt improvements.",
-    instruction=_IMPROVER_INSTRUCTION,
-)
-
 
 async def run_improvement_loop() -> str:
-    """Fetch failures from Phoenix, run improver agent, return proposed edits."""
-    failure_context = _fetch_failure_context()
+    """Connect to Phoenix via MCP, analyse failures, return proposed prompt edits."""
+    phoenix_mcp = _make_phoenix_mcp()
 
-    if failure_context.startswith("No"):
-        return failure_context
+    improver_agent = Agent(
+        name="evolvbi_improver",
+        model=_MODEL,
+        description="Reads Phoenix failure traces via MCP and proposes SQL agent prompt improvements.",
+        instruction=_IMPROVER_INSTRUCTION,
+        tools=[phoenix_mcp],
+    )
 
     message_text = (
-        f"Here are the SQL agent's failure traces from Phoenix:\n\n"
-        f"{failure_context}\n\n"
-        f"{_load_current_prompt_summary()}\n\n"
-        "Please analyse and propose prompt improvements."
+        "Please connect to Phoenix, retrieve failure traces from the 'evolvbi' project, "
+        "and propose prompt improvements based on the patterns you find.\n\n"
+        f"{_load_current_prompt_summary()}"
     )
 
     session = await _SESSION_SVC.create_session(
@@ -187,7 +168,7 @@ async def run_improvement_loop() -> str:
                 if part.text:
                     reply_parts.append(part.text)
 
-    return "".join(reply_parts)
+    return "".join(reply_parts) or "No response from improvement agent."
 
 
 if __name__ == "__main__":

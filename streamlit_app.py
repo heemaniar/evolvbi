@@ -67,12 +67,11 @@ def _load_prompt() -> str:
 
 def _save_prompt(text: str) -> None:
     try:
+        from google.cloud import bigquery as _bq
         _bq_client().query(
             f"INSERT INTO {_PROMPT_TABLE} (updated_at, prompt) VALUES (CURRENT_TIMESTAMP(), @p)",
-            job_config=__import__("google.cloud.bigquery", fromlist=["QueryJobConfig"]).QueryJobConfig(
-                query_parameters=[
-                    __import__("google.cloud.bigquery", fromlist=["ScalarQueryParameter"]).ScalarQueryParameter("p", "STRING", text)
-                ]
+            job_config=_bq.QueryJobConfig(
+                query_parameters=[_bq.ScalarQueryParameter("p", "STRING", text)]
             )
         ).result()
     except Exception:
