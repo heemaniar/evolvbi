@@ -189,10 +189,10 @@ hr { border-color:rgba(83,74,183,0.18) !important; margin:0.6rem 0 !important; }
 # ── Example questions ──────────────────────────────────────────────────────────
 EXAMPLE_QUESTIONS = [
     ("↗ Revenue", "Which mall had the highest revenue last month?"),
-    ("◈ Categories", "What are the top 5 categories by total sales?"),
-    ("◎ Customers", "How many unique customers visited Kanyon in 2022?"),
-    ("↘ Underperform", "Which tenant had the lowest revenue in 2022 at Forum Istanbul?"),
-    ("⊕ Seasonal", "Which month had the highest sales across all malls in 2022?"),
+    ("◈ Categories", "What are the top 5 categories by total sales last quarter?"),
+    ("◎ Customers", "How many unique customers shopped at Valley Fair last month?"),
+    ("↘ Underperform", "Which tenant had the lowest revenue at Stanford Shopping Center last quarter?"),
+    ("⊕ Seasonal", "Which month had the highest sales across all malls this year?"),
     ("◌ Basket", "What is the average basket size per category?"),
 ]
 

@@ -9,6 +9,7 @@ whenever the improvement loop applies prompt edits.
 """
 
 import os
+from datetime import date as _date
 
 from dotenv import load_dotenv
 from pathlib import Path
@@ -25,6 +26,9 @@ from tools.bigquery_tools import query_warehouse, SCHEMA
 # ── Model — Gemini 3 (global) with 2.5 Flash fallback ────────────────────────
 _MODEL = os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview")
 
+# Today's date — injected into prompts so the agent never uses its knowledge cutoff
+_TODAY = _date.today().isoformat()
+
 # ── Phoenix tracing ───────────────────────────────────────────────────────────
 _PHOENIX_ENDPOINT = os.environ.get(
     "PHOENIX_COLLECTOR_ENDPOINT",
@@ -38,8 +42,13 @@ tracer_provider = register(
 GoogleADKInstrumentor().instrument(tracer_provider=tracer_provider)
 
 # ── Base system prompt (shared with streamlit_app for diff visualization) ─────
-_BASE_PROMPT = f"""You are a retail analytics assistant for Istanbul mall managers.
-You have access to a BigQuery warehouse via the query_warehouse tool.
+_BASE_PROMPT = f"""You are a retail analytics assistant for Bay Area shopping mall analysts.
+You have access to a BigQuery warehouse (goldengate_core) via the query_warehouse tool.
+
+⚠️ All data is completely synthetic and generated for demonstration purposes only.
+⚠️ TODAY'S DATE IS {_TODAY}. ALL relative date references ("last month", "last quarter",
+   "this year", "recent") MUST be calculated from {_TODAY} using CURRENT_DATE().
+   NEVER treat any year before {_TODAY[:4]} as "current" or "recent".
 
 When the user asks a business question:
 1. Write a precise SQL query to answer it.
@@ -51,6 +60,9 @@ When the user asks a business question:
 Always use aggregate tables (agg_mall_daily, agg_tenant_daily) when possible.
 Never guess — only state facts that appear in query results.
 Strictly adhere to the provided schema; never reference tables or columns not listed below.
+Use CURRENT_DATE() for relative date queries ("last 30 days", "this year", etc.).
+Active tenants filter: effective_to >= CURRENT_DATE(). Never use effective_to IS NULL.
+All monetary values are in USD ($). Date range: Jan 2020 – yesterday.
 
 {SCHEMA}
 """
