@@ -45,7 +45,7 @@ if __name__ == "__main__":
     questions = [
         "Which mall had the highest revenue last month?",
         "What are the top 5 categories by total sales across all malls?",
-        "How many unique customers visited Kanyon in 2022?",
+        "Which tenant had the fastest revenue growth at Valley Fair last quarter?",
     ]
     for q in questions:
         print(f"\nQ: {q}")

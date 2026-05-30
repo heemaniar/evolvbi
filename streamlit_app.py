@@ -27,19 +27,56 @@ _ROOT = Path(__file__).parent
 sys.path.insert(0, str(_ROOT))
 load_dotenv(_ROOT / ".env")
 
-from agents.sql_agent import build_agent, _BASE_PROMPT  # noqa: E402
-from agents.improver import run_improvement_loop         # noqa: E402
+from agents.sql_agent import build_agent, _BASE_PROMPT, tracer_provider  # noqa: E402
+from agents.improver import run_improvement_loop                          # noqa: E402
+from opentelemetry import trace as _otel_trace
 
-# ── Prompt persistence ─────────────────────────────────────────────────────────
-PROMPT_FILE = _ROOT / "current_prompt.txt"
+_tracer = tracer_provider.get_tracer("evolvbi.chat")
+
+# ── Prompt persistence via BigQuery ───────────────────────────────────────────
+# Local disk is ephemeral on Cloud Run — we store the active prompt in BigQuery
+# so improvements survive cold starts and new instances.
+_BQ_PROJECT = os.environ.get("GOOGLE_CLOUD_PROJECT", "mallpulse-hackathon")
+_BQ_DATASET = os.environ.get("BQ_DATASET", "goldengate_core")
+_PROMPT_TABLE = f"`{_BQ_PROJECT}.{_BQ_DATASET}.prompt_store`"
+
+
+@st.cache_resource
+def _bq_client():
+    from google.cloud import bigquery
+    client = bigquery.Client(project=_BQ_PROJECT)
+    # Create prompt_store table if it doesn't exist
+    client.query(f"""
+        CREATE TABLE IF NOT EXISTS {_PROMPT_TABLE} (
+            updated_at TIMESTAMP,
+            prompt     STRING
+        )
+    """).result()
+    return client
 
 
 def _load_prompt() -> str:
-    return PROMPT_FILE.read_text() if PROMPT_FILE.exists() else _BASE_PROMPT
+    try:
+        rows = list(_bq_client().query(
+            f"SELECT prompt FROM {_PROMPT_TABLE} ORDER BY updated_at DESC LIMIT 1"
+        ).result())
+        return rows[0].prompt if rows else _BASE_PROMPT
+    except Exception:
+        return _BASE_PROMPT
 
 
 def _save_prompt(text: str) -> None:
-    PROMPT_FILE.write_text(text)
+    try:
+        _bq_client().query(
+            f"INSERT INTO {_PROMPT_TABLE} (updated_at, prompt) VALUES (CURRENT_TIMESTAMP(), @p)",
+            job_config=__import__("google.cloud.bigquery", fromlist=["QueryJobConfig"]).QueryJobConfig(
+                query_parameters=[
+                    __import__("google.cloud.bigquery", fromlist=["ScalarQueryParameter"]).ScalarQueryParameter("p", "STRING", text)
+                ]
+            )
+        ).result()
+    except Exception:
+        pass  # Graceful degradation — prompt still works in-session
 
 
 # ── Page config ────────────────────────────────────────────────────────────────
@@ -446,30 +483,35 @@ if prompt:
         trace_id = ""
 
         try:
-            for event in runner.run(
-                user_id=_get_user_id(),
-                session_id=st.session_state.adk_session_id,
-                new_message=Content(parts=[Part(text=prompt)], role="user"),
-            ):
-                calls = (
-                    event.get_function_calls()
-                    if hasattr(event, "get_function_calls") else []
-                )
-                if calls:
-                    tool_names = ", ".join(f"`{c.name}`" for c in calls)
-                    status_slot.caption(f"⚙️ Calling {tool_names}…")
-                    for call in calls:
-                        if call.name == "query_warehouse" and hasattr(call, "args"):
-                            last_sql = (call.args or {}).get("sql", "") or str(call.args)
+            # Wrap in an OTEL span so we capture the real Phoenix trace_id
+            # (event.invocation_id is ADK's ID, not the OTEL trace_id Phoenix uses)
+            with _tracer.start_as_current_span("evolvbi.query") as _root_span:
+                for event in runner.run(
+                    user_id=_get_user_id(),
+                    session_id=st.session_state.adk_session_id,
+                    new_message=Content(parts=[Part(text=prompt)], role="user"),
+                ):
+                    calls = (
+                        event.get_function_calls()
+                        if hasattr(event, "get_function_calls") else []
+                    )
+                    if calls:
+                        tool_names = ", ".join(f"`{c.name}`" for c in calls)
+                        status_slot.caption(f"⚙️ Calling {tool_names}…")
+                        for call in calls:
+                            if call.name == "query_warehouse" and hasattr(call, "args"):
+                                last_sql = (call.args or {}).get("sql", "") or str(call.args)
 
-                if hasattr(event, "invocation_id") and event.invocation_id:
-                    trace_id = event.invocation_id
+                    if event.content and event.content.parts:
+                        for part in event.content.parts:
+                            if hasattr(part, "text") and part.text:
+                                full_text += part.text
+                                text_slot.markdown(full_text + " ▌")
 
-                if event.content and event.content.parts:
-                    for part in event.content.parts:
-                        if hasattr(part, "text") and part.text:
-                            full_text += part.text
-                            text_slot.markdown(full_text + " ▌")
+                # Capture OTEL trace_id while span is still open
+                _ctx = _root_span.get_span_context()
+                if _ctx.is_valid:
+                    trace_id = format(_ctx.trace_id, "032x")
 
         except Exception as exc:
             err = str(exc).lower()

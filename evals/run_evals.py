@@ -63,8 +63,10 @@ def _extract_tool_outputs(span_row: pd.Series) -> list[str]:
 
 
 def _has_sql_error(tool_outputs: list[str]) -> bool:
+    # "Query returned no rows" is a valid empty result — NOT a failure.
+    # Only treat actual BigQuery errors or explicit Error: prefixes as failures.
     for out in tool_outputs:
-        if re.search(r"(BigQuery error|Error:|returned no rows)", out, re.IGNORECASE):
+        if re.search(r"(BigQuery error|^Error:)", out, re.IGNORECASE | re.MULTILINE):
             return True
     return False
 

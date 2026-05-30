@@ -98,17 +98,26 @@ def _fetch_failure_context() -> str:
 
 # ── Improvement agent ──────────────────────────────────────────────────────────
 def _load_current_prompt_summary() -> str:
-    """Read the live prompt from disk (set by streamlit_app when edits are applied)."""
-    prompt_file = Path(__file__).parent.parent / "current_prompt.txt"
-    if prompt_file.exists():
-        text = prompt_file.read_text()
-        # Truncate for the agent context — first 800 chars is enough for pattern matching
-        return "Current SQL agent system prompt:\n" + text[:800] + ("…" if len(text) > 800 else "")
+    """Read the live prompt from BigQuery prompt_store (persisted across Cloud Run instances)."""
+    try:
+        from google.cloud import bigquery
+        project = os.environ.get("GOOGLE_CLOUD_PROJECT", "mallpulse-hackathon")
+        dataset = os.environ.get("BQ_DATASET", "goldengate_core")
+        client = bigquery.Client(project=project)
+        rows = list(client.query(
+            f"SELECT prompt FROM `{project}.{dataset}.prompt_store` ORDER BY updated_at DESC LIMIT 1"
+        ).result())
+        if rows:
+            text = rows[0].prompt
+            return "Current SQL agent system prompt:\n" + text[:800] + ("…" if len(text) > 800 else "")
+    except Exception:
+        pass
     return """Current SQL agent system prompt (summary):
-- Answer natural-language questions using BigQuery SQL
+- Answer natural-language questions using BigQuery SQL about Bay Area malls
 - Use aggregate tables (agg_mall_daily, agg_tenant_daily) when possible
 - Explain results in plain English with specific numbers
 - Never state facts not in query results
+- Use CURRENT_DATE() for relative date queries
 """
 
 _IMPROVER_INSTRUCTION = """You are an AI prompt engineer for the EvolvBI SQL analytics system.
