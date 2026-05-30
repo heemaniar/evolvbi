@@ -41,7 +41,7 @@ The self-improvement loop:
 | **AI agents** | Google ADK 1.34, Gemini 2.5 Flash (Vertex AI) |
 | **Tracing** | Arize Phoenix Cloud (OpenInference instrumentation) |
 | **Evaluation** | Gemini 2.5 Flash as LLM judge (`sql_success`, `sql_relevance`) |
-| **Data warehouse** | BigQuery (`mallpulse_core` — shared with MallPulse) |
+| **Data warehouse** | BigQuery (`goldengate_core` — shared with GoldenGate Retail AI) |
 | **UI** | Streamlit — chat + reasoning panel + prompt diff |
 | **Deployment** | Cloud Run |
 
@@ -49,7 +49,22 @@ The self-improvement loop:
 
 ## Dataset
 
-Shared with [MallPulse](https://github.com/heemaniar/mallpulse): Istanbul Mall Customer Shopping dataset, 267K+ transactions across 10 Istanbul malls (2021–present), augmented with synthetic tenants, lease data, weather, and Turkish holidays.
+> ⚠️ **All data is completely synthetic and generated for demonstration purposes only.** Revenue figures, transaction counts, tenant names, lease terms, and foot traffic are fictitious and do not represent any real business.
+
+Shared with [GoldenGate Retail AI](https://github.com/heemaniar/goldengate-retail-ai): 1.7M+ synthetic transactions across **13 Bay Area shopping malls** (Jan 2020 – present), covering San Jose, Palo Alto, San Francisco, Emeryville, San Mateo, Pleasanton, Walnut Creek, Concord, and Livermore.
+
+| Table | Contents |
+|---|---|
+| `dim_mall` | 13 Bay Area malls with tier, sq ft, coordinates |
+| `dim_tenant` | Tenants with SCD Type 2 history (replacements tracked) |
+| `dim_lease` | Monthly base rent + rent-as-% -of-sales per tenant |
+| `fact_transactions` | Invoice-level sales (USD) with category, payment method |
+| `fact_foot_traffic` | Hourly estimated visits per mall |
+| `fact_weather` | Daily temperature, precipitation, weather code per mall |
+| `agg_mall_daily` | Pre-aggregated daily revenue + transactions per mall |
+| `agg_tenant_daily` | Pre-aggregated daily revenue + basket per tenant |
+
+Key real-world events modeled in the data: COVID-19 shutdown (Mar–Jun 2020), Bay Area wildfire smoke (Aug–Sep 2020), tech layoffs (Nov 2022–Dec 2023), Westfield SF Centre closure (Aug 2023), and Bay Area recovery (2024–2026).
 
 ---
 
