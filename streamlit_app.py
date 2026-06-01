@@ -106,15 +106,15 @@ h1,h2,h3,h4,h5,h6 { font-family:'Plus Jakarta Sans',sans-serif !important;
 .stApp, body { background-color:#EEEDFE !important; }
 .main .block-container { padding-top:1.5rem !important; }
 
-/* ── Sidebar — stays dark purple ────────────────────────────────────────── */
+/* ── Sidebar — light lavender ────────────────────────────────────────────── */
 [data-testid="stSidebar"] {
-    background:linear-gradient(180deg,#150F2D 0%,#2D2156 100%) !important;
-    border-right:1px solid rgba(83,74,183,0.35) !important;
+    background:#E8E6FC !important;
+    border-right:1px solid rgba(60,52,137,0.15) !important;
 }
 [data-testid="stSidebar"] .block-container { padding-top:1.25rem !important; }
 [data-testid="stSidebar"] .stMarkdown p,
 [data-testid="stSidebar"] .stMarkdown span,
-[data-testid="stSidebar"] .stCaption { color:rgba(244,243,255,0.65) !important; }
+[data-testid="stSidebar"] .stCaption { color:#3C3489 !important; }
 
 /* ── Buttons — primary ──────────────────────────────────────────────────── */
 .stButton>button[kind="primary"] {
@@ -128,17 +128,20 @@ h1,h2,h3,h4,h5,h6 { font-family:'Plus Jakarta Sans',sans-serif !important;
     transform:translateY(-1px) !important;
     box-shadow:0 6px 20px rgba(83,74,183,0.4) !important;
 }
-/* ── Sidebar buttons (dark background) ─────────────────────────────────── */
+/* ── Sidebar buttons (light background) ─────────────────────────────────── */
 [data-testid="stSidebar"] .stButton>button {
-    background:rgba(60,52,137,0.28) !important;
-    border:1px solid rgba(83,74,183,0.45) !important;
-    border-radius:10px !important; color:rgba(244,243,255,0.88) !important;
+    background:#3C3489 !important;
+    border:1px solid #3C3489 !important;
+    border-radius:10px !important; color:#FFFFFF !important;
     font-family:'Inter',sans-serif !important; font-size:0.85rem !important;
+    font-weight:500 !important;
     transition:all 0.15s !important;
 }
 [data-testid="stSidebar"] .stButton>button:hover {
-    background:rgba(83,74,183,0.4) !important;
-    border-color:#534AB7 !important; color:#F4F3FF !important;
+    background:#2D2568 !important;
+    border-color:#2D2568 !important; color:#FFFFFF !important;
+    transform:translateY(-1px) !important;
+    box-shadow:0 4px 12px rgba(60,52,137,0.3) !important;
 }
 /* ── Main area buttons (lavender background) ────────────────────────────── */
 .main .stButton>button {
@@ -224,12 +227,12 @@ hr { border-color:rgba(83,74,183,0.18) !important; margin:0.6rem 0 !important; }
 
 # ── Example questions ──────────────────────────────────────────────────────────
 EXAMPLE_QUESTIONS = [
-    ("↗ Revenue", "Which mall had the highest revenue last month?"),
-    ("◈ Categories", "What are the top 5 categories by total sales last quarter?"),
-    ("◎ Customers", "How many unique customers shopped at Valley Fair last month?"),
-    ("↘ Underperform", "Which tenant had the lowest revenue at Stanford Shopping Center last quarter?"),
-    ("⊕ Seasonal", "Which month had the highest sales across all malls this year?"),
-    ("◌ Basket", "What is the average basket size per category?"),
+    ("💰 Revenue",      "Which mall had the highest revenue last month?"),
+    ("🛍️ Categories",  "What are the top 5 categories by total sales last quarter?"),
+    ("👥 Customers",   "How many unique customers shopped at Valley Fair last month?"),
+    ("🔻 Underperform","Which tenant had the lowest revenue at Stanford Shopping Center last quarter?"),
+    ("🗓️ Seasonal",   "Which month had the highest sales across all malls this year?"),
+    ("🛒 Basket",      "What is the average basket size per category?"),
 ]
 
 
@@ -358,7 +361,7 @@ with st.sidebar:
          font-size:20px;box-shadow:0 3px 12px rgba(216,90,48,0.4);flex-shrink:0;">✨</div>
     <div>
       <div style="font-family:'Plus Jakarta Sans',sans-serif;font-size:1.05rem;
-           font-weight:800;color:#F4F3FF;line-height:1.15;letter-spacing:-0.3px;">EvolvBI</div>
+           font-weight:800;color:#3C3489;line-height:1.15;letter-spacing:-0.3px;">EvolvBI</div>
       <div style="font-size:0.68rem;color:#D85A30;font-weight:600;letter-spacing:0.6px;
            font-family:'Inter',sans-serif;text-transform:uppercase;">Self-Improving Analytics</div>
     </div>
@@ -374,8 +377,8 @@ with st.sidebar:
     st.divider()
 
     # ── Improvement loop ───────────────────────────────────────────────────────
-    st.markdown('<p style="font-size:0.72rem;color:rgba(244,243,255,0.45);font-weight:600;letter-spacing:0.8px;text-transform:uppercase;margin:0 0 6px;font-family:\'Inter\',sans-serif;">Improvement Loop</p>', unsafe_allow_html=True)
-    st.markdown('<p style="font-size:0.78rem;color:rgba(244,243,255,0.5);margin:0 0 8px;font-family:\'Inter\',sans-serif;">Reads Phoenix failure traces · proposes prompt edits</p>', unsafe_allow_html=True)
+    st.markdown('<p style="font-size:0.72rem;color:#D85A30;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;margin:0 0 6px;font-family:\'Inter\',sans-serif;">Improvement Loop</p>', unsafe_allow_html=True)
+    st.markdown('<p style="font-size:0.78rem;color:#3C3489;margin:0 0 8px;font-family:\'Inter\',sans-serif;">Reads Phoenix failure traces · proposes prompt edits</p>', unsafe_allow_html=True)
 
     if st.button("Run improvement loop", use_container_width=True, type="primary"):
         with st.spinner("Analysing failures in Phoenix…"):
@@ -444,7 +447,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 st.divider()
 
-_AVATAR = {"user": "🧑‍💼", "assistant": "📊"}
+_AVATAR = {"user": "🧑‍💼", "assistant": "✨"}
 
 for msg in st.session_state.get("messages", []):
     with st.chat_message(msg["role"], avatar=_AVATAR.get(msg["role"])):
@@ -474,7 +477,7 @@ if prompt:
     with st.chat_message("user", avatar="🧑‍💼"):
         st.markdown(prompt)
 
-    with st.chat_message("assistant", avatar="📊"):
+    with st.chat_message("assistant", avatar="✨"):
         status_slot = st.empty()
         text_slot = st.empty()
         full_text = ""

@@ -106,10 +106,14 @@ def _load_current_prompt_summary() -> str:
 _IMPROVER_INSTRUCTION = """You are an AI prompt engineer for the EvolvBI SQL analytics system.
 You have direct access to the Arize Phoenix observability platform via MCP tools.
 
+IMPORTANT — token budget: retrieve at most 20 recent spans. Do NOT fetch the full span
+payload — only span ID, input question, output summary, and eval labels. Truncate any
+individual field to 200 characters maximum before including it in your analysis.
+
 Your job when triggered:
 1. Call `list-projects` to confirm the "evolvbi" project exists.
-2. Call `get-spans` for the "evolvbi" project to retrieve recent root spans.
-3. Call `get-span-annotations` with the span IDs to find spans labelled sql_success=fail
+2. Call `get-spans` for the "evolvbi" project — limit=20, most recent only.
+3. Call `get-span-annotations` with those span IDs to find spans labelled sql_success=fail
    or sql_relevance=fail.
 4. If no failed spans exist, reply: "No failures found in Phoenix. All recent evals passed."
 5. If failures exist, group them into 2-3 distinct failure PATTERNS
@@ -119,9 +123,9 @@ Your job when triggered:
 Format your response as:
 
 PATTERN 1: <short name>
-Example span: <span ID>
+Example span: <span ID (first 12 chars)>
 Root cause: <one sentence>
-Prompt edit: <exact text to add or change in the system prompt>
+Prompt edit: <exact text to add or change — one sentence>
 
 PATTERN 2: ...
 
