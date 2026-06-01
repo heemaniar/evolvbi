@@ -459,11 +459,16 @@ st.markdown("""
 """, unsafe_allow_html=True)
 st.divider()
 
+def _md(text: str) -> str:
+    """Escape $ so Streamlit/KaTeX doesn't treat USD values as LaTeX math."""
+    return text.replace("$", r"\$")
+
+
 _AVATAR = {"user": "🧑‍💼", "assistant": "✨"}
 
 for msg in st.session_state.get("messages", []):
     with st.chat_message(msg["role"], avatar=_AVATAR.get(msg["role"])):
-        st.markdown(msg["content"])
+        st.markdown(_md(msg["content"]))
         if msg["role"] == "assistant" and msg.get("sql"):
             with st.expander("Show reasoning (SQL + trace)", expanded=False):
                 st.code(msg["sql"], language="sql")
@@ -520,7 +525,7 @@ if prompt:
                         for part in event.content.parts:
                             if hasattr(part, "text") and part.text:
                                 full_text += part.text
-                                text_slot.markdown(full_text + " ▌")
+                                text_slot.markdown(_md(full_text) + " ▌")
 
                 # Capture OTEL trace_id while span is still open
                 _ctx = _root_span.get_span_context()
@@ -537,7 +542,7 @@ if prompt:
                 full_text = "⚠️ Something went wrong. Try rephrasing your question."
 
         status_slot.empty()
-        text_slot.markdown(full_text or "_(No response)_")
+        text_slot.markdown(_md(full_text) if full_text else "_(No response)_")
 
         if last_sql:
             with st.expander("Show reasoning (SQL + trace)", expanded=False):
