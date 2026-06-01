@@ -382,15 +382,27 @@ with st.sidebar:
 
     if st.button("Run improvement loop", use_container_width=True, type="primary"):
         with st.spinner("Analysing failures in Phoenix…"):
+            # Step 1: run the agent — always save output before anything else
             try:
                 output = _run_improvement_sync()
-                st.session_state.improvement_output = output
-                # Pre-compute the rewritten prompt (shown in diff, applied on confirm)
-                st.session_state.improved_prompt = _apply_edits_to_prompt(
-                    st.session_state.get("current_prompt", _load_prompt()), output
-                )
             except Exception as e:
-                st.session_state.improvement_output = f"Error: {e}"
+                output = f"⚠️ Improvement loop error: {e}"
+            st.session_state.improvement_output = output  # shown regardless
+
+            # Step 2: only attempt to rewrite prompt when real patterns exist
+            has_patterns = "PATTERN" in output and "Prompt edit:" in output
+            if has_patterns:
+                try:
+                    st.session_state.improved_prompt = _apply_edits_to_prompt(
+                        st.session_state.get("current_prompt", _load_prompt()), output
+                    )
+                except Exception as e:
+                    # Apply failed — show original output, no diff
+                    st.session_state.improved_prompt = None
+                    st.session_state.improvement_output = (
+                        output + f"\n\n⚠️ Could not generate diff: {e}"
+                    )
+            else:
                 st.session_state.improved_prompt = None
 
     if "improvement_output" in st.session_state:
