@@ -40,13 +40,16 @@ from google.genai.types import Content, Part
 # and eval annotations — no Python SDK intermediary.
 
 def _phoenix_base_url() -> str:
-    """Extract base URL from PHOENIX_COLLECTOR_ENDPOINT."""
+    """Extract base URL from PHOENIX_COLLECTOR_ENDPOINT.
+
+    Arize Cloud uses a workspace-scoped path:
+      https://app.phoenix.arize.com/s/<workspace>/v1/traces
+    The MCP server needs the base WITHOUT /v1/traces but WITH /s/<workspace>:
+      https://app.phoenix.arize.com/s/<workspace>
+    Stripping only /v1/traces preserves the workspace path that auth requires.
+    """
     endpoint = os.environ.get("PHOENIX_COLLECTOR_ENDPOINT", "https://app.phoenix.arize.com/v1/traces")
-    # Strip path components to get the base URL
-    # e.g. https://app.phoenix.arize.com/s/maniarheema/v1/traces → https://app.phoenix.arize.com
-    from urllib.parse import urlparse
-    parsed = urlparse(endpoint)
-    return f"{parsed.scheme}://{parsed.netloc}"
+    return endpoint.replace("/v1/traces", "")
 
 
 def _make_phoenix_mcp() -> McpToolset:
