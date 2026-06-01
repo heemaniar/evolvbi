@@ -29,17 +29,37 @@ _MODEL = os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview")
 # Today's date — injected into prompts so the agent never uses its knowledge cutoff
 _TODAY = _date.today().isoformat()
 
-# ── Phoenix tracing ───────────────────────────────────────────────────────────
+# ── Phoenix tracing — lazy init ───────────────────────────────────────────────
+# Deferred until first call to avoid network round-trip at import time,
+# which was causing slow cold starts on Cloud Run.
 _PHOENIX_ENDPOINT = os.environ.get(
     "PHOENIX_COLLECTOR_ENDPOINT",
     "https://app.phoenix.arize.com/v1/traces",
 )
 
-tracer_provider = register(
-    project_name="evolvbi",
-    endpoint=_PHOENIX_ENDPOINT,
-)
-GoogleADKInstrumentor().instrument(tracer_provider=tracer_provider)
+_tracer_provider = None
+
+
+def _get_tracer_provider():
+    """Lazily initialise Phoenix tracing on first use."""
+    global _tracer_provider
+    if _tracer_provider is None:
+        _tracer_provider = register(
+            project_name="evolvbi",
+            endpoint=_PHOENIX_ENDPOINT,
+        )
+        GoogleADKInstrumentor().instrument(tracer_provider=_tracer_provider)
+    return _tracer_provider
+
+
+# Keep tracer_provider as a module-level name for improver.py imports,
+# but resolve lazily so import itself is instant.
+class _LazyTracerProvider:
+    def __getattr__(self, name):
+        return getattr(_get_tracer_provider(), name)
+
+
+tracer_provider = _LazyTracerProvider()
 
 # ── Base system prompt (shared with streamlit_app for diff visualization) ─────
 _BASE_PROMPT = f"""You are a retail analytics assistant for Bay Area shopping mall analysts.

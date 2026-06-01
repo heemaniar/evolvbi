@@ -44,7 +44,7 @@ gcloud run deploy "${SERVICE}" \
   --cpu=2 \
   --timeout=300 \
   --concurrency=10 \
-  --min-instances=0 \
+  --min-instances=1 \
   --max-instances=3 \
   --set-env-vars="\
 GOOGLE_GENAI_USE_VERTEXAI=${GOOGLE_GENAI_USE_VERTEXAI:-1},\
