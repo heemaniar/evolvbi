@@ -188,7 +188,7 @@ def _analyse_with_gemini(failure_context: str, prompt_summary: str) -> str:
             max_output_tokens=1024,
         ),
     )
-    return response.text.strip()
+    return (response.text or "").strip() or "Gemini returned an empty response — try again."
 
 
 # ── Public entry point ─────────────────────────────────────────────────────────
@@ -202,19 +202,21 @@ def analyse_failures_direct(failures: list[dict], current_prompt: str) -> str:
     if not failures:
         return "No failures found. All recent evals passed."
 
-    lines = [f"Found {len(failures)} failed span(s):\n"]
-    for f in failures:
+    # Cap at 5 examples — enough to identify 2-3 patterns without bloating context
+    sample = failures[:5]
+    lines = [f"Analysing {len(sample)} of {len(failures)} failed span(s):\n"]
+    for f in sample:
         lines.append(f"Span {f['span_id']}:")
-        lines.append(f"  Question: {f['question'][:200]}")
-        lines.append(f"  sql_success={f['sql_label']}  sql_relevance={f['rel_label']}")
-        lines.append(f"  Relevance explanation: {f['rel_explanation'][:150]}")
+        lines.append(f"  Question: {f['question'][:150]}")
+        lines.append(f"  sql={f['sql_label']}  relevance={f['rel_label']}")
+        lines.append(f"  Note: {f['rel_explanation'][:100]}")
         lines.append("")
     failure_context = "\n".join(lines)
 
     prompt_summary = (
-        "Current SQL agent system prompt:\n"
-        + current_prompt[:600]
-        + ("…" if len(current_prompt) > 600 else "")
+        "Current system prompt (key rules):\n"
+        + current_prompt[:400]
+        + ("…" if len(current_prompt) > 400 else "")
     )
 
     return _analyse_with_gemini(failure_context, prompt_summary)
