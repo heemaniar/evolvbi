@@ -318,31 +318,26 @@ def _run_improvement_sync() -> str:
 
 
 def _apply_edits_to_prompt(base: str, edits_text: str) -> str:
-    """Use Gemini to properly integrate improvement-loop edits into the base prompt.
+    """Surgically append learned rules to the base prompt.
 
-    Avoids the naive append approach that stacks contradictory instructions.
+    Extracts every 'Prompt edit:' line from the pattern blocks and adds them
+    as a compact '## Learned improvements' section. This produces a small,
+    readable diff (only the appended lines) rather than a full rewrite.
     """
-    import google.genai as genai
+    import re
+    edits = re.findall(r"Prompt edit:\s*(.+?)(?=\nPATTERN|\nPrompt edit:|\Z)", edits_text, re.DOTALL)
+    edits = [e.strip().rstrip(".") for e in edits if e.strip()]
 
-    _model = os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview")
-    client = genai.Client(
-        vertexai=True,
-        project=os.environ.get("GOOGLE_CLOUD_PROJECT", "mallpulse-hackathon"),
-        location=os.environ.get("GOOGLE_CLOUD_LOCATION", "global"),
-    )
-    response = client.models.generate_content(
-        model=_model,
-        contents=f"""You are rewriting a system prompt to incorporate proposed improvements.
-Do not append — rewrite the relevant sections so the improvements are naturally integrated.
-Return ONLY the complete rewritten prompt. Keep it concise and non-contradictory.
+    if not edits:
+        return base  # nothing to apply
 
-CURRENT PROMPT:
-{base}
+    section = "\n\n## Learned improvements\n"
+    for edit in edits:
+        section += f"- {edit}.\n"
 
-PROPOSED IMPROVEMENTS:
-{edits_text}""",
-    )
-    return response.text.strip()
+    # Avoid stacking duplicate sections on repeated apply
+    base_clean = re.sub(r"\n\n## Learned improvements\n.*", "", base, flags=re.DOTALL)
+    return base_clean + section
 
 
 # ── Diff renderer ──────────────────────────────────────────────────────────────
