@@ -28,7 +28,8 @@ sys.path.insert(0, str(_ROOT))
 load_dotenv(_ROOT / ".env")
 
 from agents.sql_agent import build_agent, _BASE_PROMPT, tracer_provider  # noqa: E402
-from agents.improver import run_improvement_loop                          # noqa: E402
+from agents.improver import run_improvement_loop, analyse_failures_direct  # noqa: E402
+from evals.run_evals import score_recent_spans                             # noqa: E402
 from opentelemetry import trace as _otel_trace
 
 _tracer = tracer_provider.get_tracer("evolvbi.chat")
@@ -403,23 +404,96 @@ with st.sidebar:
     st.markdown('<p style="font-size:0.78rem;color:#3C3489;margin:0 0 8px;font-family:\'Inter\',sans-serif;">Reads Phoenix failure traces · proposes prompt edits</p>', unsafe_allow_html=True)
 
     if st.button("Run improvement loop", use_container_width=True, type="primary"):
-        with st.spinner("Analysing failures in Phoenix…"):
-            # Step 1: run the agent — always save output before anything else
-            try:
-                output = _run_improvement_sync()
-            except Exception as e:
-                output = f"⚠️ Improvement loop error: {e}"
-            st.session_state.improvement_output = output  # shown regardless
+        progress_slot = st.empty()
 
-            # Step 2: only attempt to rewrite prompt when real patterns exist
+        def _show_steps(done: list[str], active: str | None, pending: list[str]) -> None:
+            lines = []
+            for s in done:
+                lines.append(f'<div class="il-step il-done">✅ {s}</div>')
+            if active:
+                lines.append(
+                    f'<div class="il-step il-active">'
+                    f'<span class="il-spinner"></span> {active}</div>'
+                )
+            for s in pending:
+                lines.append(f'<div class="il-step il-pending">○ {s}</div>')
+            progress_slot.markdown(
+                "<style>"
+                ".il-step{font-size:0.75rem;padding:5px 8px;border-radius:7px;"
+                "margin-bottom:4px;display:flex;align-items:center;gap:7px;}"
+                ".il-done{background:rgba(29,158,117,0.1);color:#117a57;}"
+                ".il-active{background:rgba(60,52,137,0.12);color:#3C3489;font-weight:600;}"
+                ".il-pending{background:rgba(60,52,137,0.04);color:rgba(60,52,137,0.4);}"
+                ".il-spinner{display:inline-block;width:10px;height:10px;"
+                "border:2px solid rgba(60,52,137,0.2);border-top-color:#534AB7;"
+                "border-radius:50%;animation:spin 0.7s linear infinite;flex-shrink:0;}"
+                "@keyframes spin{to{transform:rotate(360deg);}}"
+                "</style>"
+                + "".join(lines),
+                unsafe_allow_html=True,
+            )
+
+        # ── Phase 1: Score recent traces ──────────────────────────────────────
+        _show_steps([], "Scoring recent traces…", ["Reading failures", "Analysing patterns"])
+        try:
+            with concurrent.futures.ThreadPoolExecutor() as ex:
+                eval_result = ex.submit(score_recent_spans, 20).result(timeout=90)
+        except Exception as e:
+            eval_result = {"scored": 0, "failures": [], "error": str(e)}
+
+        scored    = eval_result.get("scored", 0)
+        failures  = eval_result.get("failures", [])
+        eval_err  = eval_result.get("error")
+
+        if eval_err:
+            progress_slot.empty()
+            st.session_state.improvement_output = f"⚠️ Eval error: {eval_err}"
+            st.session_state.improved_prompt    = None
+        elif not failures:
+            progress_slot.empty()
+            st.session_state.improvement_output = (
+                f"✅ Scored {scored} trace{'s' if scored != 1 else ''} — "
+                f"all evals passed. No prompt changes needed."
+            )
+            st.session_state.improved_prompt = None
+            st.session_state.scored_count    = scored
+            st.session_state.failure_count   = 0
+        else:
+            # ── Phase 2: Read failures ────────────────────────────────────────
+            _show_steps(
+                [f"Scored {scored} traces"],
+                f"Reading {len(failures)} failure{'s' if len(failures)!=1 else ''}…",
+                ["Analysing patterns"],
+            )
+
+            # ── Phase 3: Analyse patterns ─────────────────────────────────────
+            _show_steps(
+                [f"Scored {scored} traces", f"Found {len(failures)} failures"],
+                "Analysing patterns…",
+                [],
+            )
+            try:
+                current_prompt = st.session_state.get("current_prompt", _load_prompt())
+                with concurrent.futures.ThreadPoolExecutor() as ex:
+                    output = ex.submit(
+                        asyncio.run,
+                        analyse_failures_direct(failures, current_prompt),
+                    ).result(timeout=90)
+            except Exception as e:
+                output = f"⚠️ Analysis error: {e}"
+
+            progress_slot.empty()
+            st.session_state.improvement_output = output
+            st.session_state.scored_count        = scored
+            st.session_state.failure_count       = len(failures)
+
             has_patterns = "PATTERN" in output and "Prompt edit:" in output
             if has_patterns:
                 try:
                     st.session_state.improved_prompt = _apply_edits_to_prompt(
-                        st.session_state.get("current_prompt", _load_prompt()), output
+                        current_prompt, output
                     )
                 except Exception as e:
-                    # Apply failed — show original output, no diff
                     st.session_state.improved_prompt = None
                     st.session_state.improvement_output = (
                         output + f"\n\n⚠️ Could not generate diff: {e}"
@@ -428,6 +502,25 @@ with st.sidebar:
                 st.session_state.improved_prompt = None
 
     if "improvement_output" in st.session_state:
+        # Score / failure badge
+        scored  = st.session_state.get("scored_count")
+        n_fails = st.session_state.get("failure_count")
+        if scored is not None:
+            badge_html = (
+                f'<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">'
+                f'<span style="font-size:0.72rem;font-weight:600;color:#1D9E75;">'
+                f'✅ Scored {scored} trace{"s" if scored!=1 else ""}</span>'
+            )
+            if n_fails:
+                badge_html += (
+                    f'<span style="background:rgba(216,90,48,0.1);border:1px solid '
+                    f'rgba(216,90,48,0.3);border-radius:6px;padding:1px 7px;'
+                    f'font-size:0.68rem;font-weight:600;color:#D85A30;">'
+                    f'{n_fails} failure{"s" if n_fails!=1 else ""}</span>'
+                )
+            badge_html += "</div>"
+            st.markdown(badge_html, unsafe_allow_html=True)
+
         with st.expander("Proposed edits", expanded=True):
             st.markdown(st.session_state.improvement_output)
 

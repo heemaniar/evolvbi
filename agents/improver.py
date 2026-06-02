@@ -193,6 +193,65 @@ def _analyse_with_gemini(failure_context: str, prompt_summary: str) -> str:
 
 # ── Public entry point ─────────────────────────────────────────────────────────
 
+async def analyse_failures_direct(failures: list[dict], current_prompt: str) -> str:
+    """Analyse pre-scored failures directly via Gemini — no MCP subprocess.
+
+    This is the fast path used by the auto-eval UI. The MCP-based
+    run_improvement_loop() is kept for manual/CLI use.
+    """
+    if not failures:
+        return "No failures found. All recent evals passed."
+
+    lines = [f"Found {len(failures)} failed span(s):\n"]
+    for f in failures:
+        lines.append(f"Span {f['span_id']}:")
+        lines.append(f"  Question: {f['question'][:200]}")
+        lines.append(f"  sql_success={f['sql_label']}  sql_relevance={f['rel_label']}")
+        lines.append(f"  Relevance explanation: {f['rel_explanation'][:150]}")
+        lines.append("")
+    failure_context = "\n".join(lines)
+
+    prompt_summary = "Current SQL agent system prompt:\n" + current_prompt[:800] + (
+        "…" if len(current_prompt) > 800 else ""
+    )
+
+    message_text = (
+        f"Here are the SQL agent's failure traces:\n\n{failure_context}\n\n"
+        f"{prompt_summary}\n\n"
+        "Please analyse and propose prompt improvements."
+    )
+
+    direct_agent = Agent(
+        name="evolvbi_improver_direct",
+        model=_MODEL,
+        description="Reviews pre-scored EvolvBI failures and proposes prompt improvements.",
+        instruction=_IMPROVER_INSTRUCTION,
+        # No tools needed — failure context is passed as text
+    )
+
+    session = await _SESSION_SVC.create_session(
+        app_name="evolvbi_improver_direct", user_id="analyst"
+    )
+    runner = Runner(
+        agent=direct_agent,
+        app_name="evolvbi_improver_direct",
+        session_service=_SESSION_SVC,
+    )
+
+    reply_parts = []
+    async for event in runner.run_async(
+        user_id="analyst",
+        session_id=session.id,
+        new_message=Content(role="user", parts=[Part(text=message_text)]),
+    ):
+        if event.is_final_response() and event.content:
+            for part in event.content.parts:
+                if part.text:
+                    reply_parts.append(part.text)
+
+    return "".join(reply_parts) or "No response from improvement agent."
+
+
 async def run_improvement_loop() -> str:
     """Fetch Phoenix failures (SDK), analyse with Gemini, return proposed edits."""
     failure_context = _fetch_failure_context()

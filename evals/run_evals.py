@@ -103,97 +103,133 @@ def _parse_input_output(span_row: pd.Series) -> tuple[str, str]:
     return question.strip(), answer.strip()
 
 
+def _eval_single_span(args: tuple) -> tuple[list[SpanAnnotationData], dict | None]:
+    """Evaluate one root span (CODE + LLM). Returns (annotations, failure_dict|None)."""
+    span_id, row, all_spans = args
+    question, answer = _parse_input_output(row)
+
+    # ── Eval 1: sql_success (CODE) ────────────────────────────────────────────
+    child_spans = all_spans[all_spans["parent_id"] == span_id]
+    tool_spans  = child_spans[
+        child_spans["attributes.openinference.span.kind"].str.upper() == "TOOL"
+    ]
+    tool_outputs = [
+        str(r.get("attributes.output.value", "") or "")
+        for _, r in tool_spans.iterrows()
+    ]
+    has_error  = _has_sql_error(tool_outputs)
+    sql_label  = "fail" if has_error else "pass"
+
+    ann_sql = SpanAnnotationData(
+        span_id=span_id,
+        name="sql_success",
+        annotator_kind="CODE",
+        result={
+            "label": sql_label,
+            "score": 0.0 if has_error else 1.0,
+            "explanation": "SQL returned an error." if has_error else "SQL ran cleanly.",
+        },
+    )
+
+    # ── Eval 2: sql_relevance (LLM / Gemini) ─────────────────────────────────
+    if not question or not answer:
+        rel_label   = "fail"
+        rel_score   = 0.0
+        explanation = "Could not extract question or answer."
+    else:
+        prompt = _RELEVANCE_PROMPT.format(
+            question=question[:400], answer=answer[:600]
+        )
+        try:
+            raw        = _judge.generate_text(prompt).strip()
+            first_line = raw.split("\n")[0].strip().upper()
+            explanation = raw.split("\n", 1)[1].strip() if "\n" in raw else raw
+            rel_label  = "pass" if "PASS" in first_line else "fail"
+            rel_score  = 1.0 if rel_label == "pass" else 0.0
+        except Exception as e:
+            rel_label   = "fail"
+            rel_score   = 0.0
+            explanation = f"Eval error: {e}"
+
+    ann_rel = SpanAnnotationData(
+        span_id=span_id,
+        name="sql_relevance",
+        annotator_kind="LLM",
+        result={"label": rel_label, "score": rel_score, "explanation": explanation},
+    )
+
+    failure = None
+    if sql_label == "fail" or rel_label == "fail":
+        failure = {
+            "span_id":    span_id[:12],
+            "question":   question[:200],
+            "answer":     answer[:300],
+            "sql_label":  sql_label,
+            "rel_label":  rel_label,
+            "rel_explanation": explanation[:200],
+        }
+
+    return [ann_sql, ann_rel], failure
+
+
+def score_recent_spans(max_spans: int = 20) -> dict:
+    """Score the most recent N root spans from Phoenix.
+
+    Returns:
+        {"scored": int, "failures": list[dict], "error": str|None}
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    try:
+        all_spans  = _client.spans.get_spans_dataframe(project_identifier=PROJECT)
+        root_spans = all_spans[all_spans["parent_id"].isna()].copy()
+
+        if root_spans.empty:
+            return {"scored": 0, "failures": [], "error": None}
+
+        # Most-recent first, cap at max_spans
+        if "start_time" in root_spans.columns:
+            root_spans = root_spans.sort_values("start_time", ascending=False)
+        root_spans = root_spans.head(max_spans)
+
+        args = [(sid, row, all_spans) for sid, row in root_spans.iterrows()]
+
+        all_annotations: list[SpanAnnotationData] = []
+        failures: list[dict] = []
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            for anns, failure in executor.map(_eval_single_span, args):
+                all_annotations.extend(anns)
+                if failure:
+                    failures.append(failure)
+
+        # Post annotations back to Phoenix
+        if all_annotations:
+            _client.spans.log_span_annotations(
+                span_annotations=all_annotations, sync=True
+            )
+
+        return {"scored": len(root_spans), "failures": failures, "error": None}
+
+    except Exception as e:
+        return {"scored": 0, "failures": [], "error": str(e)}
+
+
 def run_evals() -> None:
+    """CLI entry point — scores all root spans and prints a summary."""
     print(f"Fetching spans from Phoenix project '{PROJECT}'…")
-    all_spans = _client.spans.get_spans_dataframe(project_identifier=PROJECT)
-    print(f"  Total spans: {len(all_spans)}")
+    result = score_recent_spans(max_spans=50)
 
-    # Root invocation spans only
-    root_spans = all_spans[all_spans["parent_id"].isna()].copy()
-    print(f"  Root spans: {len(root_spans)}")
-
-    if root_spans.empty:
-        print("No root spans found. Run app.py first to generate traces.")
+    if result["error"]:
+        print(f"Error: {result['error']}")
         return
 
-    annotations: list[SpanAnnotationData] = []
-
-    for span_id, row in root_spans.iterrows():
-        trace_id = row["context.trace_id"]
-        question, answer = _parse_input_output(row)
-
-        # ── Eval 1: sql_success (CODE) ────────────────────────────────────────
-        # Look at child spans for tool output errors
-        child_spans = all_spans[all_spans["parent_id"] == span_id]
-        tool_spans = child_spans[
-            child_spans["attributes.openinference.span.kind"].str.upper() == "TOOL"
-        ]
-        tool_outputs = [
-            str(r.get("attributes.output.value", "") or "")
-            for _, r in tool_spans.iterrows()
-        ]
-
-        has_error = _has_sql_error(tool_outputs)
-        sql_label = "fail" if has_error else "pass"
-        sql_score = 0.0 if has_error else 1.0
-
-        annotations.append(
-            SpanAnnotationData(
-                span_id=span_id,
-                name="sql_success",
-                annotator_kind="CODE",
-                result={
-                    "label": sql_label,
-                    "score": sql_score,
-                    "explanation": "SQL returned an error string." if has_error else "SQL ran cleanly.",
-                },
-            )
-        )
-
-        # ── Eval 2: sql_relevance (LLM / Gemini) ─────────────────────────────
-        if not question or not answer:
-            relevance_label = "fail"
-            relevance_score = 0.0
-            explanation = "Could not extract question or answer from span."
-        else:
-            prompt = _RELEVANCE_PROMPT.format(question=question, answer=answer)
-            try:
-                raw = _judge.generate_text(prompt).strip()
-                first_line = raw.split("\n")[0].strip().upper()
-                explanation = raw.split("\n", 1)[1].strip() if "\n" in raw else raw
-                relevance_label = "pass" if "PASS" in first_line else "fail"
-                relevance_score = 1.0 if relevance_label == "pass" else 0.0
-            except Exception as e:
-                relevance_label = "fail"
-                relevance_score = 0.0
-                explanation = f"Eval error: {e}"
-
-        annotations.append(
-            SpanAnnotationData(
-                span_id=span_id,
-                name="sql_relevance",
-                annotator_kind="LLM",
-                result={
-                    "label": relevance_label,
-                    "score": relevance_score,
-                    "explanation": explanation,
-                },
-            )
-        )
-
-        status = "sql_success=" + sql_label + "  sql_relevance=" + relevance_label
-        q_preview = (question[:60] + "…") if len(question) > 60 else question
-        print(f"  [{span_id[:12]}] {q_preview!r:65}  {status}")
-
-    # ── Log annotations to Phoenix ────────────────────────────────────────────
-    print(f"\nLogging {len(annotations)} annotations to Phoenix…")
-    _client.spans.log_span_annotations(span_annotations=annotations, sync=True)
-    print("Done. Open Phoenix → Tracing → evolvbi to see eval scores.")
-
-    # ── Summary ───────────────────────────────────────────────────────────────
-    passes = sum(1 for a in annotations if a.get("result", {}).get("label") == "pass")
-    fails = sum(1 for a in annotations if a.get("result", {}).get("label") == "fail")
-    print(f"\nSummary: {passes} pass  |  {fails} fail  |  {len(annotations)} total")
+    scored   = result["scored"]
+    failures = result["failures"]
+    passes   = scored - len(failures)
+    print(f"\nScored {scored} spans — {passes} pass | {len(failures)} fail")
+    for f in failures:
+        print(f"  FAIL [{f['span_id']}] sql={f['sql_label']} rel={f['rel_label']}  Q: {f['question'][:60]}")
+    print("\nAnnotations posted to Phoenix.")
 
 
 if __name__ == "__main__":
