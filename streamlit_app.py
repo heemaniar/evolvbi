@@ -437,7 +437,7 @@ with st.sidebar:
         _show_steps([], "Scoring recent traces…", ["Reading failures", "Analysing patterns"])
         try:
             with concurrent.futures.ThreadPoolExecutor() as ex:
-                eval_result = ex.submit(score_recent_spans, 20).result(timeout=90)
+                eval_result = ex.submit(score_recent_spans, 20).result(timeout=120)
         except Exception as e:
             eval_result = {"scored": 0, "failures": [], "error": str(e)}
 

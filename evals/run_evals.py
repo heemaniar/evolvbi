@@ -179,8 +179,18 @@ def score_recent_spans(max_spans: int = 20) -> dict:
         {"scored": int, "failures": list[dict], "error": str|None}
     """
     from concurrent.futures import ThreadPoolExecutor
+    from datetime import datetime, timedelta, timezone
     try:
-        all_spans  = _client.spans.get_spans_dataframe(project_identifier=PROJECT)
+        # Fetch recent spans only — hard cap + 7-day window + 30s timeout
+        # prevents hanging on large Phoenix projects.
+        since = datetime.now(timezone.utc) - timedelta(days=7)
+        all_spans = _client.spans.get_spans_dataframe(
+            project_identifier=PROJECT,
+            limit=max_spans * 8,   # enough to cover root + child spans
+            start_time=since,
+            timeout=30,
+        )
+
         root_spans = all_spans[all_spans["parent_id"].isna()].copy()
 
         if root_spans.empty:
