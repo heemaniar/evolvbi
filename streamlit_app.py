@@ -476,8 +476,7 @@ with st.sidebar:
                 current_prompt = st.session_state.get("current_prompt", _load_prompt())
                 with concurrent.futures.ThreadPoolExecutor() as ex:
                     output = ex.submit(
-                        asyncio.run,
-                        analyse_failures_direct(failures, current_prompt),
+                        analyse_failures_direct, failures, current_prompt
                     ).result(timeout=90)
             except Exception as e:
                 output = f"⚠️ Analysis error: {e}"

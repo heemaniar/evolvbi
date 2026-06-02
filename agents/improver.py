@@ -193,11 +193,11 @@ def _analyse_with_gemini(failure_context: str, prompt_summary: str) -> str:
 
 # ── Public entry point ─────────────────────────────────────────────────────────
 
-async def analyse_failures_direct(failures: list[dict], current_prompt: str) -> str:
-    """Analyse pre-scored failures directly via Gemini — no MCP subprocess.
+def analyse_failures_direct(failures: list[dict], current_prompt: str) -> str:
+    """Analyse pre-scored failures via Gemini directly (no ADK Agent, no MCP).
 
-    This is the fast path used by the auto-eval UI. The MCP-based
-    run_improvement_loop() is kept for manual/CLI use.
+    Uses the existing _analyse_with_gemini() helper — synchronous, fast,
+    no subprocess. Called by the Streamlit improvement loop button.
     """
     if not failures:
         return "No failures found. All recent evals passed."
@@ -211,45 +211,13 @@ async def analyse_failures_direct(failures: list[dict], current_prompt: str) -> 
         lines.append("")
     failure_context = "\n".join(lines)
 
-    prompt_summary = "Current SQL agent system prompt:\n" + current_prompt[:800] + (
-        "…" if len(current_prompt) > 800 else ""
+    prompt_summary = (
+        "Current SQL agent system prompt:\n"
+        + current_prompt[:600]
+        + ("…" if len(current_prompt) > 600 else "")
     )
 
-    message_text = (
-        f"Here are the SQL agent's failure traces:\n\n{failure_context}\n\n"
-        f"{prompt_summary}\n\n"
-        "Please analyse and propose prompt improvements."
-    )
-
-    direct_agent = Agent(
-        name="evolvbi_improver_direct",
-        model=_MODEL,
-        description="Reviews pre-scored EvolvBI failures and proposes prompt improvements.",
-        instruction=_IMPROVER_INSTRUCTION,
-        # No tools needed — failure context is passed as text
-    )
-
-    session = await _SESSION_SVC.create_session(
-        app_name="evolvbi_improver_direct", user_id="analyst"
-    )
-    runner = Runner(
-        agent=direct_agent,
-        app_name="evolvbi_improver_direct",
-        session_service=_SESSION_SVC,
-    )
-
-    reply_parts = []
-    async for event in runner.run_async(
-        user_id="analyst",
-        session_id=session.id,
-        new_message=Content(role="user", parts=[Part(text=message_text)]),
-    ):
-        if event.is_final_response() and event.content:
-            for part in event.content.parts:
-                if part.text:
-                    reply_parts.append(part.text)
-
-    return "".join(reply_parts) or "No response from improvement agent."
+    return _analyse_with_gemini(failure_context, prompt_summary)
 
 
 async def run_improvement_loop() -> str:
