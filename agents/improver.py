@@ -175,20 +175,28 @@ def _analyse_with_gemini(failure_context: str, prompt_summary: str) -> str:
         project=os.environ.get("GOOGLE_CLOUD_PROJECT", "mallpulse-hackathon"),
         location=os.environ.get("GOOGLE_CLOUD_LOCATION", "global"),
     )
-    user_msg = (
-        f"Here are the failure traces:\n\n{failure_context}\n\n"
+    # Fold system instruction into the message — more compatible with
+    # gemini-3-flash-preview on Vertex AI global endpoint than GenerateContentConfig
+    # system_instruction (which returns empty candidates on this model).
+    full_msg = (
+        f"{_SYSTEM}\n\n"
+        f"---\n\n"
+        f"FAILURE TRACES:\n{failure_context}\n\n"
         f"{prompt_summary}\n\n"
-        "Please identify patterns and propose prompt improvements."
+        "Identify patterns and propose prompt improvements."
     )
     response = client.models.generate_content(
         model=_MODEL,
-        contents=user_msg,
+        contents=full_msg,
         config=genai.types.GenerateContentConfig(
-            system_instruction=_SYSTEM,
-            max_output_tokens=1024,
+            max_output_tokens=2048,
         ),
     )
-    return (response.text or "").strip() or "Gemini returned an empty response — try again."
+    text = (response.text or "").strip()
+    if not text and response.candidates:
+        reason = getattr(response.candidates[0], "finish_reason", "unknown")
+        return f"⚠️ Gemini response empty (finish_reason: {reason}). Try again."
+    return text or "⚠️ Gemini returned no response. Try again."
 
 
 # ── Public entry point ─────────────────────────────────────────────────────────
