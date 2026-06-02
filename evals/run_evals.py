@@ -104,21 +104,20 @@ def _parse_input_output(span_row: pd.Series) -> tuple[str, str]:
 
 
 def _eval_single_span(args: tuple) -> tuple[list[SpanAnnotationData], dict | None]:
-    """Evaluate one root span (CODE + LLM). Returns (annotations, failure_dict|None)."""
-    span_id, row, all_spans = args
+    """Evaluate one root span (CODE + LLM). Returns (annotations, failure_dict|None).
+
+    CODE eval checks the root span's own output for SQL error strings — no
+    child span fetch needed (avoids the large dataset query that caused timeouts).
+    """
+    span_id, row = args
     question, answer = _parse_input_output(row)
 
-    # ── Eval 1: sql_success (CODE) ────────────────────────────────────────────
-    child_spans = all_spans[all_spans["parent_id"] == span_id]
-    tool_spans  = child_spans[
-        child_spans["attributes.openinference.span.kind"].str.upper() == "TOOL"
-    ]
-    tool_outputs = [
-        str(r.get("attributes.output.value", "") or "")
-        for _, r in tool_spans.iterrows()
-    ]
-    has_error  = _has_sql_error(tool_outputs)
-    sql_label  = "fail" if has_error else "pass"
+    # ── Eval 1: sql_success (CODE) — check root output directly ──────────────
+    # The agent includes BigQuery errors in its final response when SQL fails,
+    # so checking the root span output catches the same failures as child spans.
+    root_output = str(row.get("attributes.output.value", "") or "")
+    has_error   = _has_sql_error([root_output])
+    sql_label   = "fail" if has_error else "pass"
 
     ann_sql = SpanAnnotationData(
         span_id=span_id,
@@ -181,27 +180,25 @@ def score_recent_spans(max_spans: int = 20) -> dict:
     from concurrent.futures import ThreadPoolExecutor
     from datetime import datetime, timedelta, timezone
     try:
-        # Fetch recent spans only — hard cap + 7-day window + 30s timeout
-        # prevents hanging on large Phoenix projects.
+        # root_spans_only=True → single small query (no child spans fetched).
+        # limit + start_time + timeout=15 keep it fast and bounded.
         since = datetime.now(timezone.utc) - timedelta(days=7)
-        all_spans = _client.spans.get_spans_dataframe(
+        root_spans = _client.spans.get_spans_dataframe(
             project_identifier=PROJECT,
-            limit=max_spans * 8,   # enough to cover root + child spans
+            root_spans_only=True,
+            limit=max_spans,
             start_time=since,
-            timeout=30,
+            timeout=15,
         )
-
-        root_spans = all_spans[all_spans["parent_id"].isna()].copy()
 
         if root_spans.empty:
             return {"scored": 0, "failures": [], "error": None}
 
-        # Most-recent first, cap at max_spans
+        # Most-recent first
         if "start_time" in root_spans.columns:
             root_spans = root_spans.sort_values("start_time", ascending=False)
-        root_spans = root_spans.head(max_spans)
 
-        args = [(sid, row, all_spans) for sid, row in root_spans.iterrows()]
+        args = [(sid, row) for sid, row in root_spans.iterrows()]
 
         all_annotations: list[SpanAnnotationData] = []
         failures: list[dict] = []
