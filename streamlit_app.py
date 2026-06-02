@@ -33,6 +33,28 @@ from opentelemetry import trace as _otel_trace
 
 _tracer = tracer_provider.get_tracer("evolvbi.chat")
 
+
+# ── Phoenix project global ID (cached at startup) ─────────────────────────────
+# Phoenix GraphQL uses base64 node IDs (e.g. "UHJvamVjdDoz"), NOT project names.
+# Linking to /projects/evolvbi gives "Unknown node: evolvbi" errors.
+@st.cache_resource
+def _phoenix_project_id() -> str:
+    """Return the GraphQL global ID for the 'evolvbi' project."""
+    try:
+        endpoint = os.environ.get("PHOENIX_COLLECTOR_ENDPOINT", "")
+        if not endpoint:
+            return "evolvbi"
+        from phoenix.client import Client
+        base = endpoint.replace("/v1/traces", "")
+        client = Client(base_url=base, api_key=os.environ.get("PHOENIX_API_KEY", ""))
+        for project in client.projects.list():
+            if isinstance(project, dict) and project.get("name") == "evolvbi":
+                return project.get("id", "evolvbi")
+    except Exception:
+        pass
+    return "evolvbi"  # fallback — better than nothing
+
+
 # ── Prompt persistence via BigQuery ───────────────────────────────────────────
 # Local disk is ephemeral on Cloud Run — we store the active prompt in BigQuery
 # so improvements survive cold starts and new instances.
@@ -436,7 +458,8 @@ with st.sidebar:
     st.divider()
     phoenix_base = os.environ.get("PHOENIX_COLLECTOR_ENDPOINT", "").replace("/v1/traces", "")
     if phoenix_base:
-        st.markdown(f"[Open Phoenix traces ↗]({phoenix_base}/projects/evolvbi)")
+        _pid = _phoenix_project_id()
+        st.markdown(f"[Open Phoenix traces ↗]({phoenix_base}/projects/{_pid})")
     else:
         st.caption("_Set PHOENIX\\_COLLECTOR\\_ENDPOINT to enable trace links._")
 
@@ -473,7 +496,7 @@ for msg in st.session_state.get("messages", []):
             with st.expander("Show reasoning (SQL + trace)", expanded=False):
                 st.code(msg["sql"], language="sql")
                 if msg.get("trace_id") and phoenix_base:
-                    trace_url = f"{phoenix_base}/projects/evolvbi/traces/{msg['trace_id']}"
+                    trace_url = f"{phoenix_base}/projects/{_phoenix_project_id()}/traces/{msg['trace_id']}"
                     st.markdown(f"[View trace in Phoenix ↗]({trace_url})")
                 elif msg.get("trace_id"):
                     st.caption("Phoenix endpoint not configured — set PHOENIX_COLLECTOR_ENDPOINT to enable trace links.")
@@ -548,7 +571,7 @@ if prompt:
             with st.expander("Show reasoning (SQL + trace)", expanded=False):
                 st.code(last_sql, language="sql")
                 if trace_id and phoenix_base:
-                    trace_url = f"{phoenix_base}/projects/evolvbi/traces/{trace_id}"
+                    trace_url = f"{phoenix_base}/projects/{_phoenix_project_id()}/traces/{trace_id}"
                     st.markdown(f"[View trace in Phoenix ↗]({trace_url})")
                 elif trace_id:
                     st.caption("Set PHOENIX_COLLECTOR_ENDPOINT to enable trace links.")
