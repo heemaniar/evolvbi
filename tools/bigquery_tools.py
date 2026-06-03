@@ -74,6 +74,50 @@ Always qualify table names as `mallpulse-hackathon.goldengate_core.<table_name>`
 """
 
 
+def forecast_mall_revenue(mall_name: str, days: int = 30) -> str:
+    """Forecast daily revenue for a mall using BigQuery ML ARIMA_PLUS model.
+
+    ALWAYS use this for forward-looking revenue projections.
+    Never use last-year-minus-X% arithmetic and call it a forecast.
+
+    Args:
+        mall_name: Full or partial mall name (e.g. "Valley Fair").
+        days: Days to forecast (max 30).
+    """
+    days = min(days, 30)
+    cache_sql = f"""
+    SELECT m.mall_name, fc.forecast_date,
+           ROUND(fc.forecast_revenue, 0) AS forecast_revenue_usd,
+           ROUND(fc.lower_90, 0)         AS lower_90_usd,
+           ROUND(fc.upper_90, 0)         AS upper_90_usd
+    FROM `{PROJECT}.{DATASET}.forecast_cache` fc
+    JOIN `{PROJECT}.{DATASET}.dim_mall` m ON m.mall_id = fc.mall_id
+    WHERE LOWER(m.mall_name) LIKE LOWER('%{mall_name}%')
+      AND DATE(fc.cached_at) = CURRENT_DATE()
+    ORDER BY fc.forecast_date
+    LIMIT {days}
+    """
+    cached = query_warehouse(cache_sql)
+    if "BigQuery error" not in cached and "returned no rows" not in cached.lower():
+        return cached
+
+    live_sql = f"""
+    SELECT m.mall_name,
+           CAST(f.forecast_timestamp AS DATE)              AS forecast_date,
+           ROUND(f.forecast_value, 0)                      AS forecast_revenue_usd,
+           ROUND(f.prediction_interval_lower_bound, 0)     AS lower_90_usd,
+           ROUND(f.prediction_interval_upper_bound, 0)     AS upper_90_usd
+    FROM ML.FORECAST(
+        MODEL `{PROJECT}.{DATASET}.revenue_forecast`,
+        STRUCT({days} AS horizon, 0.9 AS confidence_level)
+    ) f
+    JOIN `{PROJECT}.{DATASET}.dim_mall` m ON m.mall_id = f.mall_id
+    WHERE LOWER(m.mall_name) LIKE LOWER('%{mall_name}%')
+    ORDER BY forecast_date LIMIT {days}
+    """
+    return query_warehouse(live_sql)
+
+
 def query_warehouse(sql: str) -> str:
     """Execute a read-only SQL query against the GoldenGate Retail AI BigQuery warehouse.
 

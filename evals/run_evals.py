@@ -71,6 +71,44 @@ def _has_sql_error(tool_outputs: list[str]) -> bool:
     return False
 
 
+def _check_grounding(answer: str, tool_output: str) -> tuple[bool, str]:
+    """Grounding eval: check that significant numbers in the answer appear in query results.
+
+    Catches hallucinated figures — e.g. an agent that says '$1.67 billion'
+    when the query returned nothing or $9.96M. sql_success + sql_relevance
+    both pass that answer; sql_grounding fails it.
+
+    Returns (is_grounded: bool, explanation: str).
+    """
+    if not tool_output or not answer:
+        return True, "No tool output to check against."
+
+    # Extract dollar amounts and large integers from the answer
+    answer_numbers = set(re.findall(r'\$[\d,]+(?:\.\d+)?[BMK]?|\b\d{4,}(?:,\d{3})*(?:\.\d+)?\b', answer))
+
+    if not answer_numbers:
+        return True, "No significant numbers in answer to verify."
+
+    ungrounded = []
+    for num_str in answer_numbers:
+        # Normalise: remove $, commas, handle B/M/K suffixes
+        normalised = num_str.replace("$", "").replace(",", "")
+        if normalised.endswith("B"):
+            normalised = str(float(normalised[:-1]) * 1e9)
+        elif normalised.endswith("M"):
+            normalised = str(float(normalised[:-1]) * 1e6)
+        elif normalised.endswith("K"):
+            normalised = str(float(normalised[:-1]) * 1e3)
+        # Check whether any close variant appears in the tool output
+        core = normalised.split(".")[0]  # integer part
+        if len(core) >= 4 and core not in tool_output.replace(",", "").replace("$", ""):
+            ungrounded.append(num_str)
+
+    if ungrounded:
+        return False, f"Numbers in response not found in query results: {', '.join(ungrounded[:3])}"
+    return True, "All significant numbers traceable to query results."
+
+
 def _parse_input_output(span_row: pd.Series) -> tuple[str, str]:
     """Extract question and answer text from a root invocation span."""
     raw_in = span_row.get("attributes.input.value", "") or ""
@@ -157,18 +195,36 @@ def _eval_single_span(args: tuple) -> tuple[list[SpanAnnotationData], dict | Non
         result={"label": rel_label, "score": rel_score, "explanation": explanation},
     )
 
+    # ── Eval 3: sql_grounding (CODE) — hallucination detection ───────────────
+    # Checks that significant numbers in the response actually appear in the
+    # query results. Catches fabricated figures that pass sql_success + sql_relevance.
+    grounded, ground_explanation = _check_grounding(answer, root_output)
+    ground_label = "pass" if grounded else "fail"
+
+    ann_ground = SpanAnnotationData(
+        span_id=span_id,
+        name="sql_grounding",
+        annotator_kind="CODE",
+        result={
+            "label":       ground_label,
+            "score":       1.0 if grounded else 0.0,
+            "explanation": ground_explanation,
+        },
+    )
+
     failure = None
-    if sql_label == "fail" or rel_label == "fail":
+    if sql_label == "fail" or rel_label == "fail" or ground_label == "fail":
         failure = {
-            "span_id":    span_id[:12],
-            "question":   question[:200],
-            "answer":     answer[:300],
-            "sql_label":  sql_label,
-            "rel_label":  rel_label,
+            "span_id":         span_id[:12],
+            "question":        question[:200],
+            "answer":          answer[:300],
+            "sql_label":       sql_label,
+            "rel_label":       rel_label,
+            "ground_label":    ground_label,
             "rel_explanation": explanation[:200],
         }
 
-    return [ann_sql, ann_rel], failure
+    return [ann_sql, ann_rel, ann_ground], failure
 
 
 def score_recent_spans(max_spans: int = 20) -> dict:

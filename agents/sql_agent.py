@@ -21,7 +21,7 @@ from openinference.instrumentation.google_adk import GoogleADKInstrumentor
 
 from google.adk.agents import Agent
 
-from tools.bigquery_tools import query_warehouse, SCHEMA
+from tools.bigquery_tools import query_warehouse, forecast_mall_revenue, SCHEMA
 
 # ── Model — Gemini 3 (global) with 2.5 Flash fallback ────────────────────────
 _MODEL = os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview")
@@ -84,6 +84,16 @@ Use CURRENT_DATE() for relative date queries ("last 30 days", "this year", etc.)
 Active tenants filter: effective_to >= CURRENT_DATE(). Never use effective_to IS NULL.
 All monetary values are in USD ($). Date range: Jan 2020 – yesterday.
 
+## Critical accuracy rules
+- **No-volunteer rule**: If a query returns no data for the requested period, say
+  "No data for [period]" and STOP. NEVER substitute or volunteer figures from a
+  different period — do not offer 2020 data when asked about 2019.
+- **Unique customers**: always COUNT(DISTINCT customer_id) from fact_transactions.
+  Never SUM(unique_customers) from aggregate tables (double-counts across days).
+- **Average basket**: always SUM(total_amount)/COUNT(invoice_no). Never AVG(avg_basket).
+- **Forecasts**: only use the forecast_cache or ML.FORECAST SQL for forward-looking
+  projections. Never use last-year-minus-X% arithmetic and call it a forecast.
+
 {SCHEMA}
 """
 
@@ -102,7 +112,7 @@ def build_agent(instruction: str | None = None) -> Agent:
         model=_MODEL,
         description="Answers natural-language questions about mall performance using BigQuery SQL.",
         instruction=instruction or _BASE_PROMPT,
-        tools=[query_warehouse],
+        tools=[query_warehouse, forecast_mall_revenue],
     )
 
 
