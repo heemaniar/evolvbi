@@ -198,6 +198,29 @@ def score_recent_spans(max_spans: int = 20) -> dict:
         if "start_time" in root_spans.columns:
             root_spans = root_spans.sort_values("start_time", ascending=False)
 
+        # ── Harness hygiene: drop non-user spans ──────────────────────────────
+        # Framework/eval spans have NaN, empty, or meta-text inputs.
+        # Evaluating them produces false failures and leaks eval prompts
+        # back into the improvement loop (PATTERN 2 symptom).
+        def _is_real_user_span(row: pd.Series) -> bool:
+            q, _ = _parse_input_output(row)
+            if not q or q.strip().lower() in ("nan", "none", ""):
+                return False
+            # Eval harness prompts contain distinctive phrases — skip them
+            if any(p in q for p in (
+                "Does the answer directly address",
+                "evaluating whether an AI",
+                "Reply with exactly one word",
+            )):
+                return False
+            return True
+
+        valid = [_is_real_user_span(row) for _, row in root_spans.iterrows()]
+        root_spans = root_spans[valid]
+
+        if root_spans.empty:
+            return {"scored": 0, "failures": [], "error": None}
+
         args = [(sid, row) for sid, row in root_spans.iterrows()]
 
         all_annotations: list[SpanAnnotationData] = []

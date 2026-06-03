@@ -341,30 +341,60 @@ def _apply_edits_to_prompt(base: str, edits_text: str) -> str:
 
 
 # ── Diff renderer ──────────────────────────────────────────────────────────────
+def _strip_schema_for_diff(text: str) -> str:
+    """Remove the static schema block so it never clutters the diff.
+    Schema never changes between prompt versions — only behaviour rules do.
+    """
+    lines = text.splitlines()
+    # Find the SCHEMA block boundary markers
+    start = next((i for i, l in enumerate(lines) if "BigQuery dataset:" in l or "dim_mall" in l), None)
+    end   = next((i for i, l in enumerate(lines) if "Always qualify table names" in l), None)
+    if start is not None:
+        stub = ["[schema block omitted — unchanged]"]
+        after = lines[end + 1:] if end is not None else []
+        return "\n".join(lines[:start] + stub + after)
+    return text
+
+
 def _render_prompt_diff(old: str, new: str) -> str:
-    """Return HTML showing old text in red strikethrough, new text in green."""
-    diff = list(difflib.ndiff(old.splitlines(keepends=True), new.splitlines(keepends=True)))
+    """Compact unified diff — git-style hunks, schema excluded, 3 lines context."""
+    old_s = _strip_schema_for_diff(old)
+    new_s = _strip_schema_for_diff(new)
+
+    diff = list(difflib.unified_diff(
+        old_s.splitlines(keepends=True),
+        new_s.splitlines(keepends=True),
+        fromfile="before", tofile="after",
+        n=3,
+    ))
+
+    if not diff:
+        return '<span style="color:#888;font-family:monospace;font-size:0.75rem;">No changes detected.</span>'
+
     html_lines = []
     for line in diff:
-        escaped = (
-            line[2:].rstrip("\n")
-            .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        )
-        if line.startswith("- "):
+        esc = line.rstrip("\n").replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+        if line.startswith("@@"):
             html_lines.append(
-                f'<span style="background:#3d0000;color:#ff6b6b;text-decoration:line-through;'
-                f'display:block;padding:1px 6px;font-family:monospace;white-space:pre-wrap">'
-                f'{escaped}</span>'
+                f'<span style="color:#6b83b0;display:block;padding:2px 6px;'
+                f'font-family:monospace;font-size:0.72rem;">{esc}</span>'
             )
-        elif line.startswith("+ "):
+        elif line.startswith("-") and not line.startswith("---"):
             html_lines.append(
-                f'<span style="background:#003320;color:#1D9E75;display:block;padding:1px 6px;'
-                f'font-family:monospace;white-space:pre-wrap">{escaped}</span>'
+                f'<span style="background:rgba(255,80,80,0.12);color:#e06c6c;'
+                f'text-decoration:line-through;display:block;padding:1px 6px;'
+                f'font-family:monospace;font-size:0.73rem;white-space:pre-wrap">{esc}</span>'
             )
-        elif line.startswith("  "):
+        elif line.startswith("+") and not line.startswith("+++"):
             html_lines.append(
-                f'<span style="color:#888;display:block;padding:1px 6px;'
-                f'font-family:monospace;white-space:pre-wrap">{escaped}</span>'
+                f'<span style="background:rgba(29,158,117,0.12);color:#1D9E75;'
+                f'display:block;padding:1px 6px;font-family:monospace;'
+                f'font-size:0.73rem;white-space:pre-wrap">{esc}</span>'
+            )
+        elif not line.startswith(("---","+++")):
+            html_lines.append(
+                f'<span style="color:rgba(26,23,53,0.45);display:block;padding:1px 6px;'
+                f'font-family:monospace;font-size:0.73rem;white-space:pre-wrap">{esc}</span>'
             )
     return "<div>" + "".join(html_lines) + "</div>"
 
@@ -515,11 +545,13 @@ with st.sidebar:
             badge_html += "</div>"
             st.markdown(badge_html, unsafe_allow_html=True)
 
+        # Proposed edits — headline (always expanded)
         with st.expander("Proposed edits", expanded=True):
             st.markdown(st.session_state.improvement_output)
 
         if st.session_state.get("improved_prompt"):
-            with st.expander("Prompt diff", expanded=True):
+            # Compact diff — collapsed by default (it's a detail, not the headline)
+            with st.expander("Prompt diff (what changes)", expanded=False):
                 diff_html = _render_prompt_diff(
                     st.session_state.get("current_prompt", _load_prompt()),
                     st.session_state["improved_prompt"],
@@ -528,14 +560,38 @@ with st.sidebar:
 
             # ── Apply & Rebuild button ─────────────────────────────────────────
             if st.button("✅ Apply & Rebuild Agent", use_container_width=True, type="primary"):
-                new_prompt = st.session_state["improved_prompt"]
-                _save_prompt(new_prompt)
-                # Invalidate session so next query uses the new runner
-                st.session_state.pop("adk_session_id", None)
-                _get_runner(force_prompt=new_prompt)
-                st.success("Agent rebuilt with improved prompt. Next query uses the new instructions.")
+                new_prompt   = st.session_state["improved_prompt"]
+                old_failures = st.session_state.get("failure_count", "?")
+                n_edits      = len([l for l in new_prompt.split("\n") if l.strip().startswith("- ") and
+                                    "## Learned improvements" in new_prompt])
+
+                with st.spinner("Saving prompt + re-running evals to verify…"):
+                    # 1. Persist + rebuild
+                    _save_prompt(new_prompt)
+                    st.session_state.pop("adk_session_id", None)
+                    _get_runner(force_prompt=new_prompt)
+
+                    # 2. Re-score same batch to measure improvement
+                    try:
+                        with concurrent.futures.ThreadPoolExecutor() as ex:
+                            re_eval = ex.submit(score_recent_spans, 20).result(timeout=90)
+                        new_failures = len(re_eval.get("failures", []))
+                        re_scored    = re_eval.get("scored", 0)
+                        delta        = int(old_failures) - new_failures if str(old_failures).isdigit() else "?"
+                        verify_msg   = (
+                            f"✅ Applied edits → agent rebuilt → "
+                            f"re-ran {re_scored} traces → "
+                            f"**{new_failures} failures** (was {old_failures}"
+                            + (f", ↓{delta}" if isinstance(delta, int) else "") + ")"
+                        )
+                    except Exception:
+                        verify_msg = "✅ Applied edits → agent rebuilt. Re-run loop to measure improvement."
+
+                st.success(verify_msg)
                 st.session_state.pop("improvement_output", None)
                 st.session_state.pop("improved_prompt", None)
+                st.session_state.pop("scored_count", None)
+                st.session_state.pop("failure_count", None)
                 st.rerun()
 
     st.divider()
