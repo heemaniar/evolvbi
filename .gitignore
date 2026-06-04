@@ -2,3 +2,6 @@
 .venv/
 __pycache__/
 *.pyc
+
+# Submission-prep docs — keep local, not in public repo
+demo_script.md
