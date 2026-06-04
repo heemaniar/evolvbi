@@ -74,6 +74,43 @@ Always qualify table names as `mallpulse-hackathon.goldengate_core.<table_name>`
 """
 
 
+def _append_forecast_total(md: str) -> str:
+    """Append a grounded N-DAY TOTAL line to a forecast markdown table.
+
+    The forecast total must be computed here from the daily rows so the LLM
+    never has to sum them in prose (which it does ~22% low). The agent prompt
+    instructs the model to quote this line verbatim.
+    """
+    if not md or "|" not in md or "forecast_revenue_usd" not in md:
+        return md
+    rows = [l for l in md.splitlines() if l.strip().startswith("|")]
+    if len(rows) < 3:  # need header + separator + >=1 data row
+        return md
+    headers = [h.strip() for h in rows[0].strip().strip("|").split("|")]
+    try:
+        col = headers.index("forecast_revenue_usd")
+    except ValueError:
+        return md
+    total, n = 0.0, 0
+    for line in rows[2:]:  # skip header + separator
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) <= col:
+            continue
+        try:
+            total += float(cells[col].replace("$", "").replace(",", ""))
+            n += 1
+        except ValueError:
+            continue
+    if n == 0:
+        return md
+    return (
+        md
+        + f"\n**{n}-DAY TOTAL: ${total:,.0f}**  "
+        + f"(sum of the {n} daily forecasts above — quote this figure for the "
+        + "total; never re-sum the daily rows yourself)\n"
+    )
+
+
 def forecast_mall_revenue(mall_name: str, days: int = 30) -> str:
     """Forecast daily revenue for a mall using BigQuery ML ARIMA_PLUS model.
 
@@ -99,7 +136,7 @@ def forecast_mall_revenue(mall_name: str, days: int = 30) -> str:
     """
     cached = query_warehouse(cache_sql)
     if "BigQuery error" not in cached and "returned no rows" not in cached.lower():
-        return cached
+        return _append_forecast_total(cached)
 
     live_sql = f"""
     SELECT m.mall_name,
@@ -115,7 +152,7 @@ def forecast_mall_revenue(mall_name: str, days: int = 30) -> str:
     WHERE LOWER(m.mall_name) LIKE LOWER('%{mall_name}%')
     ORDER BY forecast_date LIMIT {days}
     """
-    return query_warehouse(live_sql)
+    return _append_forecast_total(query_warehouse(live_sql))
 
 
 def query_warehouse(sql: str) -> str:

@@ -93,6 +93,13 @@ All monetary values are in USD ($). Date range: Jan 2020 – yesterday.
 - **Average basket**: always SUM(total_amount)/COUNT(invoice_no). Never AVG(avg_basket).
 - **Forecasts**: only use the forecast_cache or ML.FORECAST SQL for forward-looking
   projections. Never use last-year-minus-X% arithmetic and call it a forecast.
+- **Forecast totals**: forecast_mall_revenue returns an "N-DAY TOTAL" line below the
+  daily rows. When reporting a forecast total, quote that line's figure verbatim.
+  NEVER sum the daily rows yourself — that drifts low.
+- **No pipeline tool**: you have no pipeline- or connector-monitoring tool. For
+  pipeline / data-freshness questions, report data recency via MAX(date) only.
+  Do NOT assert connector health or that "the pipeline is healthy" — you cannot
+  observe that.
 
 {SCHEMA}
 """

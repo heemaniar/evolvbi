@@ -89,20 +89,50 @@ def _check_grounding(answer: str, tool_output: str) -> tuple[bool, str]:
     if not answer_numbers:
         return True, "No significant numbers in answer to verify."
 
+    # Parse every numeric value out of the tool output for proximity matching.
+    output_values: list[float] = []
+    for tok in re.findall(r'[\d,]+(?:\.\d+)?', tool_output):
+        try:
+            output_values.append(float(tok.replace(",", "")))
+        except ValueError:
+            continue
+    output_flat = tool_output.replace(",", "").replace("$", "")
+
     ungrounded = []
     for num_str in answer_numbers:
-        # Normalise: remove $, commas, handle B/M/K suffixes
+        # Normalise: remove $, commas, handle B/M/K suffixes → numeric value
         normalised = num_str.replace("$", "").replace(",", "")
         if normalised.endswith("B"):
-            normalised = str(float(normalised[:-1]) * 1e9)
+            value = float(normalised[:-1]) * 1e9
         elif normalised.endswith("M"):
-            normalised = str(float(normalised[:-1]) * 1e6)
+            value = float(normalised[:-1]) * 1e6
         elif normalised.endswith("K"):
-            normalised = str(float(normalised[:-1]) * 1e3)
-        # Check whether any close variant appears in the tool output
-        core = normalised.split(".")[0]  # integer part
-        if len(core) >= 4 and core not in tool_output.replace(",", "").replace("$", ""):
-            ungrounded.append(num_str)
+            value = float(normalised[:-1]) * 1e3
+        else:
+            try:
+                value = float(normalised)
+            except ValueError:
+                continue
+
+        core = str(int(value))  # integer part
+
+        # Bare 4-digit years (e.g. "2026" mentioned in prose) are not data
+        # figures — skip them so they don't false-flag as ungrounded.
+        if "$" not in num_str and 1900 <= int(value) <= 2100:
+            continue
+
+        # Only verify figures with >=4 integer digits (smaller ones are noise).
+        if len(core) < 4:
+            continue
+
+        # 1) exact substring match against the raw output, OR
+        if core in output_flat:
+            continue
+        # 2) numeric proximity (within ~2%) — lets rounded answers pass
+        #    ("$264,000" vs a query result of 263,912) without false-flagging.
+        if any(v != 0 and abs(value - v) / abs(v) <= 0.02 for v in output_values):
+            continue
+        ungrounded.append(num_str)
 
     if ungrounded:
         return False, f"Numbers in response not found in query results: {', '.join(ungrounded[:3])}"

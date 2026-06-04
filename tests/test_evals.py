@@ -161,3 +161,44 @@ class TestParseInputOutput:
         question, answer = _parse_input_output(row)
         assert question == "Q?"
         assert answer == "A!"
+
+
+class TestCheckGrounding:
+    """FIX 4 — grounding must catch fabrications but not false-flag rounded
+    answers or bare years."""
+
+    _TOOL_OUTPUT = (
+        "| mall_name | revenue_usd |\n"
+        "| --- | --- |\n"
+        "| Stanford Shopping Center | 263912 |\n"
+        "| Valley Fair | 374398 |\n"
+    )
+
+    def test_fabricated_billion_fails(self):
+        """$1.67B appears nowhere in the output → ungrounded → FAIL."""
+        from evals.run_evals import _check_grounding
+        grounded, _ = _check_grounding("Total revenue was $1.67B.", self._TOOL_OUTPUT)
+        assert grounded is False
+
+    def test_exact_figure_passes(self):
+        """$374,398 is an exact substring of the output → PASS."""
+        from evals.run_evals import _check_grounding
+        grounded, _ = _check_grounding("Valley Fair made $374,398.", self._TOOL_OUTPUT)
+        assert grounded is True
+
+    def test_rounded_figure_passes_via_proximity(self):
+        """'$264,000' is within ~2% of 263,912 → PASS (no false flag on rounding)."""
+        from evals.run_evals import _check_grounding
+        grounded, _ = _check_grounding("Roughly $264,000 in revenue.", self._TOOL_OUTPUT)
+        assert grounded is True
+
+    def test_bare_year_passes(self):
+        """A 4-digit year in prose ('2026') is not a data figure → PASS."""
+        from evals.run_evals import _check_grounding
+        grounded, _ = _check_grounding("Through the end of 2026 the trend holds.", self._TOOL_OUTPUT)
+        assert grounded is True
+
+    def test_no_numbers_passes(self):
+        from evals.run_evals import _check_grounding
+        grounded, _ = _check_grounding("Revenue grew strongly.", self._TOOL_OUTPUT)
+        assert grounded is True
