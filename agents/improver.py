@@ -42,6 +42,111 @@ def _phoenix_client():
     )
 
 
+# ── Arize Phoenix MCP server (the partner MCP integration) ──────────────────────
+# The improvement loop reads its failure data by calling the official Phoenix MCP
+# server (@arizeai/phoenix-mcp) at runtime over stdio — get-spans + get-span-
+# annotations — not just the SDK. This is the Arize-track partner MCP requirement,
+# genuinely invoked when the loop runs. Falls back to the SDK if the MCP server
+# (Node/npx) is unavailable, so the demo never hard-fails.
+_PHOENIX_PROJECT = "evolvbi"
+
+
+def _mcp_server_params():
+    from mcp import StdioServerParameters
+    return StdioServerParameters(
+        command="npx",
+        args=[
+            "-y", "@arizeai/phoenix-mcp@latest",
+            "--baseUrl", _phoenix_base_url(),
+            "--apiKey", os.environ.get("PHOENIX_API_KEY", ""),
+        ],
+    )
+
+
+def _q_from_attrs(attrs: dict) -> str:
+    """Best-effort question text from a span's attributes (MCP shape varies)."""
+    raw = ""
+    if isinstance(attrs, dict):
+        raw = (attrs.get("input", {}) or {}).get("value", "") if isinstance(attrs.get("input"), dict) else ""
+        raw = raw or attrs.get("input.value", "") or ""
+    try:
+        d = json.loads(raw)
+        parts = d.get("content", [{}])[0].get("parts", [{}]) if isinstance(d.get("content"), list) else d.get("new_message", {}).get("parts", [{}])
+        return (parts[0].get("text", "") or raw)[:200]
+    except Exception:
+        return str(raw)[:200]
+
+
+async def _mcp_fetch_failures_async(limit: int = 40):
+    """Connect to the Phoenix MCP server and return (failures, spans_read, note)."""
+    from mcp import ClientSession
+    from mcp.client.stdio import stdio_client
+
+    async with stdio_client(_mcp_server_params()) as (r, w):
+        async with ClientSession(r, w) as session:
+            await session.initialize()
+
+            def _text(res):
+                return "".join(getattr(c, "text", "") for c in res.content)
+
+            spans_res = await session.call_tool(
+                "get-spans",
+                {"project_identifier": _PHOENIX_PROJECT, "limit": limit},
+            )
+            data = json.loads(_text(spans_res))
+            spans = data.get("spans", data) if isinstance(data, dict) else data
+            spans = spans or []
+            roots = [s for s in spans if not s.get("parent_id")]
+            root_ids = [(s.get("context") or {}).get("span_id") for s in roots]
+            root_ids = [i for i in root_ids if i]
+            if not root_ids:
+                return [], len(spans), f"Phoenix MCP: read {len(spans)} spans, no root spans yet."
+
+            ann_res = await session.call_tool(
+                "get-span-annotations",
+                {"project_identifier": _PHOENIX_PROJECT, "span_ids": root_ids},
+            )
+            anns = json.loads(_text(ann_res))
+            anns = anns.get("annotations", anns) if isinstance(anns, dict) else anns
+            anns = anns or []
+
+            by_span: dict[str, dict] = {}
+            for a in anns:
+                sid = a.get("span_id") or a.get("spanId") or ""
+                name = a.get("name") or a.get("annotation_name") or "?"
+                res = a.get("result") or {}
+                label = a.get("label") or res.get("label")
+                expl = a.get("explanation") or res.get("explanation") or ""
+                d = by_span.setdefault(sid, {"labels": {}, "expl": ""})
+                d["labels"][name] = label
+                if label == "fail" and expl and not d["expl"]:
+                    d["expl"] = expl
+
+            attrs_by_id = {(s.get("context") or {}).get("span_id"): (s.get("attributes") or {}) for s in roots}
+            failures = []
+            for sid, info in by_span.items():
+                if "fail" not in info["labels"].values():
+                    continue
+                failures.append({
+                    "span_id": sid,
+                    "question": _q_from_attrs(attrs_by_id.get(sid, {})) or "(question unavailable via MCP)",
+                    "sql_label": info["labels"].get("sql_success", "?"),
+                    "rel_label": info["labels"].get("sql_relevance", "?"),
+                    "ground_label": info["labels"].get("sql_grounding", "?"),
+                    "rel_explanation": info["expl"],
+                })
+            return failures, len(spans), f"Phoenix MCP: read {len(spans)} spans, {len(failures)} failures."
+
+
+def fetch_failures_via_mcp(limit: int = 40):
+    """Sync wrapper: returns (failures:list[dict], note:str). Empty list on any error."""
+    try:
+        failures, n, note = asyncio.run(_mcp_fetch_failures_async(limit))
+        return failures, note
+    except Exception as e:
+        return [], f"Phoenix MCP unavailable ({type(e).__name__}: {str(e)[:80]}); using SDK fallback."
+
+
 def _fetch_failure_context() -> str:
     """Fetch failed spans via Phoenix SDK with aggressive truncation.
 
@@ -231,15 +336,28 @@ def analyse_failures_direct(failures: list[dict], current_prompt: str) -> str:
 
 
 async def run_improvement_loop() -> str:
-    """Fetch Phoenix failures (SDK), analyse with Gemini, return proposed edits."""
-    failure_context = _fetch_failure_context()
+    """Read failures via the Phoenix MCP server (partner integration), analyse with
+    Gemini, return proposed edits. Falls back to the Phoenix SDK if the MCP server
+    is unavailable so the loop still runs."""
+    prompt_summary = _load_current_prompt_summary()
 
-    # Short-circuit if nothing to analyse
+    # Primary path: the Arize Phoenix MCP server, called at runtime.
+    try:
+        failures, n_spans, note = await _mcp_fetch_failures_async(40)
+        print(note)
+        if failures:
+            return analyse_failures_direct(failures, prompt_summary)
+        if n_spans:  # MCP worked, just no failures scored yet
+            return ("No failures found via Phoenix MCP. Run evals/run_evals.py to "
+                    "score recent traces, then re-run the improvement loop.")
+    except Exception as e:
+        print(f"Phoenix MCP unavailable ({type(e).__name__}: {e}); falling back to SDK.")
+
+    # Fallback: Phoenix SDK.
+    failure_context = _fetch_failure_context()
     if failure_context.startswith(("No spans", "No annotations", "No failures",
                                    "Cannot connect", "Error")):
         return failure_context
-
-    prompt_summary = _load_current_prompt_summary()
     return _analyse_with_gemini(failure_context, prompt_summary)
 
 

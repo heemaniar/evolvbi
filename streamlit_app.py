@@ -28,7 +28,7 @@ sys.path.insert(0, str(_ROOT))
 load_dotenv(_ROOT / ".env")
 
 from agents.sql_agent import build_agent, _BASE_PROMPT, tracer_provider  # noqa: E402
-from agents.improver import run_improvement_loop, analyse_failures_direct  # noqa: E402
+from agents.improver import run_improvement_loop, analyse_failures_direct, fetch_failures_via_mcp  # noqa: E402
 from evals.run_evals import score_recent_spans                             # noqa: E402
 from opentelemetry import trace as _otel_trace
 
@@ -484,12 +484,22 @@ with st.sidebar:
             st.session_state.scored_count    = scored
             st.session_state.failure_count   = 0
         else:
-            # ── Phase 2: Read failures ────────────────────────────────────────
-            _show_steps(
-                [f"Scored {scored} traces"],
-                f"Reading {len(failures)} failure{'s' if len(failures)!=1 else ''}…",
-                ["Analysing patterns"],
-            )
+            # ── Phase 2: Read failures via the Arize Phoenix MCP server ───────
+            # score_recent_spans wrote the eval annotations to Phoenix; now read
+            # the failed spans back through the partner MCP server (get-spans +
+            # get-span-annotations). Falls back to the just-scored list if the
+            # MCP server is unavailable.
+            try:
+                with concurrent.futures.ThreadPoolExecutor() as ex:
+                    mcp_failures, mcp_note = ex.submit(fetch_failures_via_mcp, 40).result(timeout=90)
+            except Exception as e:
+                mcp_failures, mcp_note = [], f"Phoenix MCP error: {e}"
+            if mcp_failures:
+                failures = mcp_failures
+                read_label = f"Read {len(failures)} failures via Phoenix MCP…"
+            else:
+                read_label = f"Reading {len(failures)} failure{'s' if len(failures)!=1 else ''}…"
+            _show_steps([f"Scored {scored} traces"], read_label, ["Analysing patterns"])
 
             # ── Phase 3: Analyse patterns ─────────────────────────────────────
             _show_steps(
