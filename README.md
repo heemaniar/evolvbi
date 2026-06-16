@@ -163,14 +163,6 @@ evolvbi/
 
 ---
 
-## Hackathon
-
-Built for the **[Google Cloud Rapid Agent Hackathon](https://googlecloudagents.devpost.com/)** — Arize Phoenix track.
-
-**Submission deadline:** June 11, 2026
-
----
-
 ## License
 
 MIT — see [LICENSE](LICENSE)
